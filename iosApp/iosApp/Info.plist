@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<!-- TcpTransport connects to a printer's raw IP on the local network,
+	     which iOS 14+ gates behind this permission prompt. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app connects to ESC/POS receipt printers on your local Wi-Fi network to print receipts.</string>
+</dict>
+</plist>
