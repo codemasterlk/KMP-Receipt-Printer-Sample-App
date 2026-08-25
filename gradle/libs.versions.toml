@@ -1,6 +1,6 @@
 [versions]
-agp = "9.0.1"
-android-compileSdk = "36"
+agp = "9.1.0"
+android-compileSdk = "37"
 android-minSdk = "24"
 android-targetSdk = "36"
 androidx-activity = "1.13.0"
@@ -36,7 +36,19 @@ compose-components-resources = { module = "org.jetbrains.compose.components:comp
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
 kotlinx-coroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
-escpos-printer = { module = "io.github.kmpgaraj:escpos-printer", version.ref = "escposPrinter" }
+# TerminalPrinterKMP (io.github.kmpgaraj) publishes one artifact per module — there is no single
+# umbrella "escpos-printer" artifact on Maven Central, so each module the sample app touches is
+# its own alias here, all pinned to the same release.
+escpos-core = { module = "io.github.kmpgaraj:escpos-core", version.ref = "escposPrinter" }
+escpos-render = { module = "io.github.kmpgaraj:escpos-render", version.ref = "escposPrinter" }
+escpos-session = { module = "io.github.kmpgaraj:escpos-session", version.ref = "escposPrinter" }
+escpos-fonts = { module = "io.github.kmpgaraj:escpos-fonts", version.ref = "escposPrinter" }
+escpos-transport-api = { module = "io.github.kmpgaraj:escpos-transport-api", version.ref = "escposPrinter" }
+escpos-transport-bt = { module = "io.github.kmpgaraj:escpos-transport-bt", version.ref = "escposPrinter" }
+escpos-transport-usb = { module = "io.github.kmpgaraj:escpos-transport-usb", version.ref = "escposPrinter" }
+escpos-transport-serial = { module = "io.github.kmpgaraj:escpos-transport-serial", version.ref = "escposPrinter" }
+escpos-transport-spooler = { module = "io.github.kmpgaraj:escpos-transport-spooler", version.ref = "escposPrinter" }
+escpos-transport-tcp = { module = "io.github.kmpgaraj:escpos-transport-tcp", version.ref = "escposPrinter" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

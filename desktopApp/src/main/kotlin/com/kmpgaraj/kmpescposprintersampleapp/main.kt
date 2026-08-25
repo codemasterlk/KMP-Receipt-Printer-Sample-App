@@ -8,6 +8,6 @@ fun main() = application {
         onCloseRequest = ::exitApplication,
         title = "KMPEscPosPrinterSampleApp",
     ) {
-        App()
+        App(context = Unit)
     }
 }

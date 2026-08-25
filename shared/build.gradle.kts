@@ -45,6 +45,9 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.compose.uiTooling)
+            // rememberBluetoothRefresh's Android actual: runtime permission request + Context.
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.core.ktx)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -57,9 +60,21 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.coroutinesCore)
 
-            // TerminalPrinterKMP — umbrella artifact: DSL/layout core, renderer,
-            // bundled fonts, session handling, and every transport.
-            implementation(libs.escpos.printer)
+            // TerminalPrinterKMP — DSL/layout core, renderer, bundled fonts, session handling,
+            // and every transport. Published as one artifact per module (no umbrella artifact),
+            // so each is its own dependency; escpos-transport-serial/-spooler stub Unavailable on
+            // Android/iOS and escpos-transport-bt stubs Unavailable on iOS (real elsewhere) —
+            // see TransportKind.kt's KDoc.
+            implementation(libs.escpos.core)
+            implementation(libs.escpos.render)
+            implementation(libs.escpos.session)
+            implementation(libs.escpos.fonts)
+            implementation(libs.escpos.transport.api)
+            implementation(libs.escpos.transport.bt)
+            implementation(libs.escpos.transport.usb)
+            implementation(libs.escpos.transport.serial)
+            implementation(libs.escpos.transport.spooler)
+            implementation(libs.escpos.transport.tcp)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
