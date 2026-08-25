@@ -60,21 +60,8 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.coroutinesCore)
 
-            // TerminalPrinterKMP — DSL/layout core, renderer, bundled fonts, session handling,
-            // and every transport. Published as one artifact per module (no umbrella artifact),
-            // so each is its own dependency; escpos-transport-serial/-spooler stub Unavailable on
-            // Android/iOS and escpos-transport-bt stubs Unavailable on iOS (real elsewhere) —
-            // see TransportKind.kt's KDoc.
-            implementation(libs.escpos.core)
-            implementation(libs.escpos.render)
-            implementation(libs.escpos.session)
-            implementation(libs.escpos.fonts)
-            implementation(libs.escpos.transport.api)
-            implementation(libs.escpos.transport.bt)
-            implementation(libs.escpos.transport.usb)
-            implementation(libs.escpos.transport.serial)
-            implementation(libs.escpos.transport.spooler)
-            implementation(libs.escpos.transport.tcp)
+
+            implementation(libs.escpos.printer)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
