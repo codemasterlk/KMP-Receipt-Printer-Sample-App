@@ -36,7 +36,7 @@ One shared Compose Multiplatform UI, one shared `SampleAppState`, running on And
 
 Thermal printers can render text two ways:
 
-- **Native text mode** — the printer's own built-in font draws the characters. Fast, but limited to whatever code pages the printer firmware ships with (Latin, Cyrillic, a handful of others). Scripts like Sinhala, Tamil, Thai, or Devanagari simply aren't printable this way.
+- **Native text mode** — the printer's own built-in font draws the characters. Fast, but limited to whatever code pages the printer firmware ships with (Latin, Cyrillic, a handful of others). Scripts like Thai or Devanagari simply aren't printable this way.
 - **Graphic mode** — the entire receipt (logo, text, rules, QR, barcode) is rendered into one bitmap on the host, thresholded to 1-bit-per-pixel, and streamed to the printer as raster image data. Any script, any font, any layout — the printer just reproduces pixels.
 
 This library — and this sample app — only ever use graphic mode.
@@ -45,7 +45,7 @@ This library — and this sample app — only ever use graphic mode.
 
 **Receipt content**
 - A fixed 100-item invoice (store header, line items, subtotal/discount/VAT/total, QR code, Code 39 barcode) — dial how many of the 100 items actually print
-- Font picker: [Noto Sans](https://fonts.google.com/noto/specimen/Noto+Sans) (default, with Sinhala/Tamil bundled for script correctness) plus 10 additional bundled Latin faces — Roboto, Open Sans, Lato, Montserrat, Oswald, Raleway, Poppins, Nunito, PT Sans, Merriweather
+- Font picker: [Noto Sans](https://fonts.google.com/noto/specimen/Noto+Sans) (default) plus 10 additional bundled Latin faces — Roboto, Open Sans, Lato, Montserrat, Oswald, Raleway, Poppins, Nunito, PT Sans, Merriweather
 - **Live preview** rendered at true physical size (1 layout dot = 1 printer dot = 1 screen dot), so what you see is exactly what prints — not scaled to fit the panel
 
 **Printer setup**
@@ -283,8 +283,6 @@ val renderer = ReceiptRenderer(config, measurer, fontLookup)
 | id | Covers |
 |---|---|
 | `NotoFontLookup.NOTO_SANS` | Latin/general — the default, and the fallback for a `null` or unrecognized id |
-| `NotoFontLookup.NOTO_SANS_SINHALA` | Sinhala |
-| `NotoFontLookup.NOTO_SANS_TAMIL` | Tamil |
 | `NotoFontLookup.CONTENT_FONTS` | 10 more Latin-only faces (`id`/`label` pairs) — Roboto, Open Sans, Lato, Montserrat, Oswald, Raleway, Poppins, Nunito, PT Sans, Merriweather |
 
 Every family is instanced at all nine `dev.escpos.core.FontWeight` steps (Thin…Black) from one bundled variable-font file where the family has a `wght` axis; the three static-only families (Lato, Poppins, PT Sans) render every requested weight as their one bundled Regular instance instead.
@@ -292,8 +290,8 @@ Every family is instanced at all nine `dev.escpos.core.FontWeight` steps (Thin�
 Printing non-Latin text is just naming the right font id in a `TextStyle` — no other setup:
 
 ```kotlin
-val sinhala = TextStyle(fontFamily = NotoFontLookup.NOTO_SANS_SINHALA, fontSize = 28)
-text("සිංහල පෙළ", style = sinhala)
+val complexScript = TextStyle(fontFamily = NotoFontLookup.NOTO_SANS, fontSize = 28)
+text("your text here", style = complexScript)
 ```
 
 28 dots is the sample's own diagnostic size for complex scripts — at 203dpi (8 dots/mm), Latin stays legible around 16 dots, but scripts with above/below-base marks need roughly 28–32 before the marks start colliding.
