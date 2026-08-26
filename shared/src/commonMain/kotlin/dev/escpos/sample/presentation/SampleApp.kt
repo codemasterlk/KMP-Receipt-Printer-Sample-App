@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -87,7 +88,12 @@ fun SampleApp(context: PlatformContext) {
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            // enableEdgeToEdge() (see MainActivity's actual) draws this content behind the status
+            // bar / navigation bar / display cutout on Android — without consuming those insets
+            // here, the header and the bottom action buttons render underneath them instead of
+            // above. safeContentPadding() also covers Desktop/iOS window insets (a notch, in
+            // principle), so it's applied unconditionally rather than only on Android.
+            BoxWithConstraints(modifier = Modifier.fillMaxSize().safeContentPadding()) {
                 if (maxWidth >= WIDE_LAYOUT_BREAKPOINT) {
                     Row(modifier = Modifier.fillMaxSize()) {
                         FormPane(
