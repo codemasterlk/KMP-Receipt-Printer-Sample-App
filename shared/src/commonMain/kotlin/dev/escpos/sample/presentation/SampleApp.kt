@@ -2,6 +2,7 @@ package dev.escpos.sample.presentation
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -47,13 +49,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.escpos.core.CutMode
 import dev.escpos.core.RasterMode
+import dev.escpos.core.RuleStyle
 import dev.escpos.fonts.NotoFontLookup
 import dev.escpos.sample.data.platform.PlatformContext
+import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.TransportKind
 import dev.escpos.sample.domain.model.availableTransportKinds
 import dev.escpos.sample.domain.receipt.HARDCODED_ITEMS
@@ -193,8 +198,10 @@ private fun FormPane(
         ) {
             Text(if (uiState.printing) "Printing…" else "Print receipt")
         }
-        // Separate from "Print receipt" — FR-8.6's checkerboard/fonts/QR-scale verification
-        // pattern, not the customer-facing content above. See SampleAppViewModel's KDoc.
+        // Separate from "Print receipt" — a verification pattern, not the customer-facing content
+        // above. Which receipt this sends depends on the print mode (the checkerboard/fonts/QR-
+        // scale pattern in Graphic, the alignment/style/size/character-coverage pattern in Text) —
+        // enabled in both modes since both have one. See SampleAppViewModel's printDiagnostic.
         OutlinedButton(
             onClick = { viewModel.onEvent(SampleAppEvent.PrintDiagnostic) },
             enabled = !uiState.printing,
@@ -210,6 +217,16 @@ private fun FormPane(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Check printer status (paper/cover)")
+        }
+        // Testing-only isolation tool — see FeedAndCutUseCase's KDoc: sends INIT + feed + cut
+        // alone, nothing else, to tell apart "the cut command/transport path itself is the
+        // problem" from "something about a real receipt's content ahead of the cut is."
+        OutlinedButton(
+            onClick = { viewModel.onEvent(SampleAppEvent.FeedAndCut) },
+            enabled = !uiState.printing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Feed + cut only (test)")
         }
         uiState.printStatus?.let { status -> Text(status, textAlign = TextAlign.Start) }
     }
@@ -356,7 +373,9 @@ private fun HeaderSection() {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Printer setup", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Receipts render as images, so any language prints on any printer.",
+            "Graphic mode renders as an image, so any language prints on any printer. Text mode " +
+                "uses the printer's own font instead — English/Latin only, but works on cheap " +
+                "printers with no graphic support at all.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -462,6 +481,34 @@ private fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewMod
                     subtitle = device.address,
                     statusLabel = "Paired",
                 )
+            }
+            // Diagnostic-only — see BluetoothSppTransport's `paced` KDoc. Off (paced) is the
+            // normal, real-hardware-confirmed behavior; check this to A/B test against another
+            // app's own zero-pacing Bluetooth send path on the same printer.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!uiState.bluetoothPaced)) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = !uiState.bluetoothPaced,
+                    onCheckedChange = { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!it)) },
+                )
+                Text(
+                    "Unpaced writes (diagnostic — no delay between Bluetooth writes)",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            // See ReplayReferenceJobUseCase's KDoc — sends a real captured reference job's exact
+            // bytes through this app's own connection, bypassing rendering entirely, to isolate
+            // whether a difference is in the bytes or in the connection.
+            OutlinedButton(
+                onClick = { viewModel.onEvent(SampleAppEvent.ReplayReferenceJob) },
+                enabled = !uiState.printing && uiState.selectedBluetoothDevice != null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Replay captured reference job (diagnostic)")
             }
         }
 
@@ -599,6 +646,42 @@ private fun ProfileCard(uiState: SampleAppUiState, viewModel: SampleAppViewModel
             )
 
             HorizontalDivider()
+            SectionLabel("Print mode")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                PrintMode.entries.forEachIndexed { index, mode ->
+                    SegmentedButton(
+                        selected = uiState.printMode == mode,
+                        onClick = { viewModel.onEvent(SampleAppEvent.PrintModeChanged(mode)) },
+                        shape = SegmentedButtonDefaults.itemShape(index, PrintMode.entries.size),
+                        label = { Text(mode.label) },
+                    )
+                }
+            }
+            Text(
+                uiState.printMode.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // Text mode's one printer-specific knob (FR-8.7) — irrelevant to graphic mode, so
+            // only shown once it actually applies to something the user is about to send.
+            if (uiState.printMode == PrintMode.Text) {
+                OutlinedTextField(
+                    value = uiState.columnsOverride,
+                    onValueChange = { viewModel.onEvent(SampleAppEvent.ColumnsOverrideChanged(it)) },
+                    label = { Text("Columns") },
+                    placeholder = { Text(uiState.defaultColumns.toString()) },
+                    supportingText = {
+                        Text(
+                            "Characters per line. Leave blank to use ${uiState.defaultColumns}, computed " +
+                                "from dot width assuming the printer's default font (Font A) — override " +
+                                "only if your printer's default font differs.",
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            HorizontalDivider()
             SectionLabel("Paper and output")
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 DropdownField(
@@ -626,6 +709,42 @@ private fun ProfileCard(uiState: SampleAppUiState, viewModel: SampleAppViewModel
                     }
                 }
             }
+            // Diagnostic-only — see RuleStyle's own KDoc. Off (Solid) is the receipt's original
+            // look; check this to A/B test whether a solid full-width rule's own dot density is
+            // behind a residual feed roughness real-hardware testing traced to it.
+            DiagnosticCheckbox(
+                checked = uiState.ruleStyle == RuleStyle.Dashed,
+                onCheckedChange = {
+                    viewModel.onEvent(SampleAppEvent.RuleStyleChanged(if (it) RuleStyle.Dashed else RuleStyle.Solid))
+                },
+                label = "Dashed rules (diagnostic — avoids a solid full-width black line)",
+            )
+            // Diagnostic-only — see ReceiptOptions.includeLogoQrBarcode's KDoc. Checked drops the
+            // logo/QR/barcode (all high dot-density blocks), isolating whether they're behind a
+            // residual feed roughness the rule style's own fix didn't fully explain.
+            DiagnosticCheckbox(
+                checked = !uiState.includeLogoQrBarcode,
+                onCheckedChange = { viewModel.onEvent(SampleAppEvent.IncludeLogoQrBarcodeChanged(!it)) },
+                label = "Drop logo/QR/barcode (diagnostic — isolates text-and-rules content)",
+            )
+            // Diagnostic-only — see ReceiptOptions.boldHeadings's KDoc. Checked prints the store
+            // name and Total at normal weight, isolating whether bold stroke density (not size)
+            // is behind whatever's left once the logo/QR/barcode test found no difference.
+            DiagnosticCheckbox(
+                checked = !uiState.boldHeadings,
+                onCheckedChange = { viewModel.onEvent(SampleAppEvent.BoldHeadingsChanged(!it)) },
+                label = "Normal-weight headings (diagnostic — tests bold stroke density)",
+            )
+            // Diagnostic-only — see ReceiptOptions.itemGapDots's KDoc. Real-hardware testing found
+            // the bad sound clustering around every tight line-to-line gap, the tightest being the
+            // 6-dot item gap; adjustable since the right value isn't known yet.
+            OutlinedTextField(
+                value = uiState.itemGapDots,
+                onValueChange = { viewModel.onEvent(SampleAppEvent.ItemGapDotsChanged(it)) },
+                label = { Text("Item gap (dots, diagnostic)") },
+                placeholder = { Text("6") },
+                modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(
                 value = uiState.dotWidth,
                 onValueChange = { viewModel.onEvent(SampleAppEvent.DotWidthChanged(it)) },
@@ -688,6 +807,22 @@ private fun paperWidthLabel(dotWidth: String): String = when (dotWidth) {
 private fun rasterModeLabel(mode: RasterMode): String = when (mode) {
     RasterMode.EscAsterisk -> "ESC * — works everywhere"
     RasterMode.GsV0 -> "GS v 0 — faster, needs testing"
+    RasterMode.GsV0ContentAdaptive -> "GS v 0 (content-adaptive) — splits only at blank rows"
+}
+
+/** A whole-row-clickable checkbox with a caption — the shape every diagnostic toggle in
+ *  [ProfileCard] shares, so the row, not just the 48dp box, is the tap target. */
+@Composable
+private fun DiagnosticCheckbox(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Text(label, style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 /** A dropdown styled like a text field (label above, value + chevron below) backed by a plain
@@ -750,7 +885,8 @@ private fun formatOneDecimal(value: Double): String {
 }
 
 /**
- * Renders [SampleAppUiState.previewBitmap] at its true physical size — [dotsToDp] converts the
+ * In text mode, shows [SampleAppUiState.previewTextLines] in a monospace face instead. In graphic
+ * mode, renders [SampleAppUiState.previewBitmap] at its true physical size — [dotsToDp] converts the
  * receipt's dot dimensions to real-world millimeters and back into [Dp] (which is *itself*
  * defined as 1/160 inch, a physical unit, not a pixel count), so what's on screen is the same
  * size paper would come out at, text included — not `ContentScale.Fit`, which would
@@ -785,11 +921,24 @@ private fun PreviewPane(uiState: SampleAppUiState, modifier: Modifier = Modifier
                     .fillMaxWidth()
                     .clipToBounds()
                     .verticalScroll(rememberScrollState()),
-                contentAlignment = Alignment.TopCenter,
+                contentAlignment = if (uiState.printMode == PrintMode.Text) Alignment.TopStart else Alignment.TopCenter,
             ) {
                 val bitmap = uiState.previewBitmap
                 val error = uiState.previewError
                 when {
+                    error != null -> Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    // Text mode has no bitmap at all — the plain preview strings, in a monospace
+                    // face so the host-computed column padding actually lines up on screen the way
+                    // it will on the printer's own fixed-width font.
+                    uiState.printMode == PrintMode.Text -> if (uiState.previewTextLines.isEmpty()) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text(
+                            uiState.previewTextLines.joinToString("\n"),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                     bitmap != null -> Image(
                         bitmap = bitmap,
                         contentDescription = "Receipt preview",
@@ -798,19 +947,23 @@ private fun PreviewPane(uiState: SampleAppUiState, modifier: Modifier = Modifier
                             .width(dotsToDp(uiState.dotWidth.toIntOrNull() ?: bitmap.width))
                             .height(dotsToDp(uiState.previewHeightDots)),
                     )
-                    error != null -> Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                     else -> CircularProgressIndicator()
                 }
             }
             Spacer(Modifier.height(8.dp))
+            val isText = uiState.printMode == PrintMode.Text
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
-                    "${uiState.dotWidth} × ${uiState.previewHeightDots}",
+                    if (isText) {
+                        "${uiState.resolvedColumns} cols × ${uiState.previewHeightDots} lines"
+                    } else {
+                        "${uiState.dotWidth} × ${uiState.previewHeightDots}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "${formatOneDecimal(uiState.previewRasterKb)} KB raster",
+                    "${formatOneDecimal(uiState.previewRasterKb)} KB " + if (isText) "sent" else "raster",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

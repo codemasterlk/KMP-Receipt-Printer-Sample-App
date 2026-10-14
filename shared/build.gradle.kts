@@ -60,13 +60,22 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.coroutinesCore)
 
-
+            // TerminalPrinterKMP umbrella artifact (io.github.codemasterlk:escpos-printer) —
+            // core/render/session/every transport. As of 0.1.0-alpha02 it ships no font bytes of
+            // its own: this module bundles its own (composeResources/font, licenses/) and hands
+            // them to NotoFontLookup.create — see data/platform/SampleFonts.kt.
             implementation(libs.escpos.printer)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
     }
+}
+
+compose.resources {
+    // Pinned (instead of the module-derived default) so SampleFonts.kt's `Res` import reads
+    // predictably and doesn't shift if this module is ever renamed.
+    packageOfResClass = "dev.escpos.sample.generated.resources"
 }
 
 dependencies {

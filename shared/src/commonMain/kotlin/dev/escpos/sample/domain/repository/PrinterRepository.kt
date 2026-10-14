@@ -45,4 +45,9 @@ interface PrinterRepository {
      *  presentation's `SampleAppUiState.feedDotsAfterContent`; an unparseable value falls back to
      *  [dev.escpos.render.DEFAULT_FEED_DOTS_AFTER_CONTENT]. */
     suspend fun createRenderer(profile: PrinterProfile, feedDotsAfterContentRaw: String): ReceiptRenderer
+
+    /** A real, previously captured print job — one `INIT`, then one piece per raster command,
+     *  then the tail — as the exact byte pieces the original app wrote it in. A diagnostic
+     *  fixture bundled with the app, not something built from a [dev.escpos.core.Receipt]. */
+    suspend fun loadReferenceJob(): List<ByteArray>
 }

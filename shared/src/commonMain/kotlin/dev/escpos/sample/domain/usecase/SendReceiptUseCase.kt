@@ -1,87 +1,61 @@
 package dev.escpos.sample.domain.usecase
 
+import dev.escpos.core.DEFAULT_TEXT_MODE_FEED_DOTS_AFTER_CONTENT
 import dev.escpos.core.PrinterProfile
 import dev.escpos.core.Receipt
+import dev.escpos.core.textPrintJob
+import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.TransportSelection
 import dev.escpos.sample.domain.repository.PrinterRepository
-import dev.escpos.session.PacingPolicy
-import dev.escpos.session.PrintResult
-import dev.escpos.session.PrintSession
-import dev.escpos.session.RetryPolicy
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
-/** [SendReceiptUseCase]'s result — the presentation layer turns either branch into both UI status
- *  text and a print-log entry. */
-sealed interface SendResult {
-    data class Success(val message: String) : SendResult
-    data class Failure(val message: String) : SendResult
-}
 
 /**
  * Sends an already-built [Receipt] — [dev.escpos.sample.domain.receipt.customInvoiceReceipt]'s
- * customer receipt or the library's bundled diagnostic pattern, the caller decides which — over
- * whichever transport/device [selection] identifies. Connects (if needed), renders to ESC/POS
- * bytes, and drives a [PrintSession] with retry; see [PrintSession]'s own KDoc for the
- * pacing/retry/reconnect behavior this wraps.
+ * customer receipt or one of the library's diagnostic patterns, the caller decides which — over
+ * whichever transport/device [TransportSelection] identifies. Which pipeline turns the receipt
+ * into bytes depends on [PrintMode]: [PrintMode.Graphic] renders it to a raster image through
+ * `ReceiptRenderer`; [PrintMode.Text] formats it with the printer's own font via native text
+ * commands. Everything after that — connect, retry, stats, close — is [PrintJobRunner]'s, and
+ * identical for both.
  *
  * [label] is purely cosmetic — it only shows up in the success/failure message text ("Receipt
  * sent successfully." vs. "Diagnostic receipt sent successfully.").
  */
 class SendReceiptUseCase(private val repository: PrinterRepository) {
+    private val runner = PrintJobRunner(repository)
+
     suspend operator fun invoke(
         receipt: Receipt,
         profile: PrinterProfile,
         feedDotsAfterContent: String,
         selection: TransportSelection,
         label: String,
+        mode: PrintMode,
     ): SendResult {
-        val transport = repository.buildTransport(selection)
-            ?: return SendResult.Failure("Select a device (or enter a TCP host/port, or a serial baud rate) first")
-
-        return try {
-            val job = repository.createRenderer(profile, feedDotsAfterContent).render(receipt)
-            val session = PrintSession(
-                transport = transport,
-                // PacingPolicy.None, not TimedPacing: with chunkHeightDots = profile.bandHeight
-                // (24 for ESC * mode), TimedPacing sleeps after *every single band* — for a
-                // normal-length receipt that's dozens of stop/resume cycles, which is exactly
-                // what showed up on real hardware as visible stepping/vibration instead of a
-                // continuous paper roll. Modern thermal printers carry enough onboard buffer, and
-                // the transport's own backpressure (Bluetooth RFCOMM credit flow, USB
-                // bulk-transfer blocking, TCP socket buffering) already throttles writes to what
-                // the print head can actually consume.
-                pacing = PacingPolicy.None,
-                chunkHeightDots = profile.bandHeight,
-                retryPolicy = RetryPolicy(),
-            )
-            // Real socket/RFCOMM/USB I/O — must not run on the caller's dispatcher. Presentation
-            // dispatches SampleAppEvent.PrintReceipt/PrintDiagnostic via a rememberCoroutineScope(),
-            // whose default dispatcher is Main, and Android's StrictMode kills a network syscall
-            // made there with NetworkOnMainThreadException.
-            when (val result = withContext(Dispatchers.IO) { session.print(job) }) {
-                PrintResult.Success -> SendResult.Success("$label sent successfully.")
-                is PrintResult.Failure -> SendResult.Failure(
-                    "Failed at chunk ${result.chunkIndex} after ${result.attempts} attempt(s): " +
-                        describeError(result.cause),
+        // Counts each chunk as the session actually consumes it — see JobByteBreakdown's KDoc.
+        val breakdown = JobByteBreakdown()
+        return runner.run(
+            selection = selection,
+            label = label,
+            chunkHeightDots = profile.bandHeight,
+            // Surfaced in the result: a GS v 0 test print that silently sent ESC * instead (the
+            // raster mode having reverted to its default) otherwise looks identical to a real
+            // ESC * run, making "I tested GS v 0 and saw no difference" indistinguishable from
+            // "GS v 0 was never actually sent".
+            modeLabel = when (mode) {
+                PrintMode.Graphic -> "${profile.rasterMode} bandHeight=${profile.bandHeight}"
+                PrintMode.Text -> "Text columns=${profile.columns}"
+            },
+            describeExtra = { breakdown.describe(profile.dotWidth) },
+        ) {
+            val rawJob = when (mode) {
+                PrintMode.Graphic -> repository.createRenderer(profile, feedDotsAfterContent).render(receipt)
+                PrintMode.Text -> textPrintJob(
+                    receipt,
+                    profile,
+                    feedDotsAfterContent.toIntOrNull() ?: DEFAULT_TEXT_MODE_FEED_DOTS_AFTER_CONTENT,
                 )
             }
-        } catch (e: Exception) {
-            SendResult.Failure("Print failed: ${describeError(e)}")
-        } finally {
-            withContext(Dispatchers.IO) { runCatching { transport.close() } }
+            rawJob.map { chunk -> breakdown.record(chunk); chunk }
         }
     }
-}
-
-/** [Throwable.message] plus the underlying [Throwable.cause]'s message where one exists and says
- *  something new — e.g. `escpos-transport-tcp`'s `TransportIOException` wraps every connect/write
- *  failure in one generic message ("failed to connect to host:port"); the OS-level reason that's
- *  actually diagnostic ("Connection refused", "No route to host") only lives in
- *  [Throwable.cause]. Showing `e.message` alone silently discards it. Shared by
- *  [SendReceiptUseCase] and [CheckPrinterStatusUseCase]. */
-internal fun describeError(e: Throwable): String {
-    val own = e.message ?: e.toString()
-    val causeMessage = e.cause?.message
-    return if (causeMessage != null && causeMessage != own) "$own ($causeMessage)" else own
 }

@@ -5,9 +5,12 @@ import dev.escpos.core.PrinterProfile
 import dev.escpos.core.RasterImage
 import dev.escpos.core.Receipt
 import dev.escpos.core.TextAlign
+import dev.escpos.core.TextSize
 import dev.escpos.core.TextStyle
 import dev.escpos.core.receipt
 import dev.escpos.fonts.NotoFontLookup
+import dev.escpos.sample.domain.model.PrintMode
+import dev.escpos.sample.domain.model.ReceiptOptions
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,26 +67,46 @@ internal val HARDCODED_ITEMS: List<ReceiptLineItem> = List(100) { index ->
 
 /**
  * Builds the receipt shown in the preview panel and sent by "Print receipt". Every field is fixed
- * (see the constants/[HARDCODED_ITEMS] above) except [itemCount] and [fontFamilyId] — presentation's
- * `SampleAppUiState.itemCount` lets the user dial the former between 1 and [HARDCODED_ITEMS].size,
- * and `SampleAppUiState.contentFontId` the latter between [NotoFontLookup.NOTO_SANS] (default) and
- * any of [NotoFontLookup.CONTENT_FONTS]. Subtotal/discount/VAT/total are computed from the
- * included items, never separately editable, so they can't drift out of arithmetic sync.
+ * (see the constants/[HARDCODED_ITEMS] above) except [itemCount], [fontFamilyId], and [options] —
+ * presentation's `SampleAppUiState.itemCount` lets the user dial the first between 1 and
+ * [HARDCODED_ITEMS].size, and `SampleAppUiState.contentFontId` the second between
+ * [NotoFontLookup.NOTO_SANS] (default) and any of [NotoFontLookup.CONTENT_FONTS]. Subtotal/
+ * discount/VAT/total are computed from the included items, never separately editable, so they
+ * can't drift out of arithmetic sync.
  *
  * QR and a Code 39 barcode both encode digits taken from [INVOICE_NUMBER] and print as the very
  * last two blocks, after the footer message — "bottom of the receipt" per the confirmed request.
  * See `dev.escpos.render.barcode.Code39Encoder`'s KDoc for the barcode's digits-only scope and
  * its "unverified against a real scanner" caveat.
+ *
+ * [ReceiptOptions.mode] picks which blocks actually go in: [PrintMode.Text] has no raster path,
+ * so the logo `image(...)` and the `qr(...)`/`barcode(...)` pair are left out entirely rather than
+ * sent and made to fail fast — a text-mode receipt is a deliberately different, smaller document,
+ * not the graphic-mode one with two blocks silently dropped. The invoice number still prints as
+ * plain text where the barcode/QR pair would have gone, so it isn't lost, just no longer scannable.
+ * The other [ReceiptOptions] fields are diagnostic-only; see that class's KDoc.
  */
 internal fun customInvoiceReceipt(
     profile: PrinterProfile,
     itemCount: Int,
     fontFamilyId: String = NotoFontLookup.NOTO_SANS,
+    options: ReceiptOptions = ReceiptOptions(),
 ): Receipt {
+    val mode = options.mode
+    val gap = options.itemGapDots
     val body = TextStyle(fontFamily = fontFamilyId, fontWeight = FontWeight.SemiBold, fontSize = 24)
     val small = body.copy(fontSize = 24)
-    val title = body.copy(fontSize = 28, fontWeight = FontWeight.Bold)
-    val totalStyle = body.copy(fontSize = 24, fontWeight = FontWeight.Bold)
+    // fontSize and textScale size graphic mode and text mode independently (TextStyle's KDoc) —
+    // fontSize = TextSize.Large is what makes the store name bigger in graphic mode; textScale = 2
+    // is the unrelated choice that makes it 2x width/height in text mode via GS ! n. Both are set
+    // so the title reads "bigger" the same way regardless of mode. textScale only applies to
+    // whole-row text() lines (like the store name); the "Total" line { } row below still prints at
+    // normal size in text mode — per-cell sizing inside line { }/table { } isn't supported.
+    // boldHeadings only ever toggles fontWeight, never fontSize/textScale — this isolates stroke
+    // density specifically, not "does this line look big".
+    val headingWeight = if (options.boldHeadings) FontWeight.Bold else FontWeight.Normal
+    val title = body.copy(fontSize = TextSize.Large, fontWeight = headingWeight, textScale = 2)
+    val totalStyle = body.copy(fontSize = TextSize.Large, fontWeight = headingWeight, textScale = 2)
 
     val items = HARDCODED_ITEMS.take(itemCount.coerceIn(1, HARDCODED_ITEMS.size))
     val lineTotals = items.map { it.qty * it.price }
@@ -94,23 +117,30 @@ internal fun customInvoiceReceipt(
 
     val invoiceDigits = INVOICE_NUMBER.filter { it.isDigit() }
     val invoiceDate = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US).format(Date())
+    val rasterExtras = mode == PrintMode.Graphic && options.includeLogoQrBarcode
 
     return receipt(body) {
-        space(4)
-        image(solidSquareLogo(), align = TextAlign.Center)
-        space(4)
+        if (rasterExtras) {
+            space(4)
+            image(solidSquareLogo(), align = TextAlign.Center)
+            space(4)
+        }
         text(STORE_NAME, style = title, align = TextAlign.Center)
+        space(gap)
         text(STORE_ADDRESS, style = small, align = TextAlign.Center)
+        space(gap)
         text(STORE_PHONE, style = small, align = TextAlign.Center)
         space(8)
-        rule()
+        rule(style = options.ruleStyle)
         space(8)
 
         line { left("Invoice", style = small); right(INVOICE_NUMBER, style = small) }
+        space(gap)
         line { left("Date", style = small); right(invoiceDate, style = small) }
+        space(gap)
         line { left("Cashier", style = small); right(CASHIER, style = small) }
         space(8)
-        rule()
+        rule(style = options.ruleStyle)
         space(8)
 
         // Each item prints as two lines: the numbered name on its own full-width line, then a
@@ -125,24 +155,33 @@ internal fun customInvoiceReceipt(
                 center(item.qty.toString(), style = small)
                 right(money(lineTotals[index]), style = small)
             }
-            if (index != items.lastIndex) space(6)
+            if (index != items.lastIndex) space(gap)
         }
         space(8)
-        rule()
+        rule(style = options.ruleStyle)
         space(8)
 
         line { left("Subtotal", style = small); right(money(subtotal), style = small) }
+        space(gap)
         line { left("Discount $DISCOUNT_PERCENT%", style = small); right("-" + money(discountAmount), style = small) }
+        space(gap)
         line { left("VAT $VAT_PERCENT%", style = small); right(money(vatAmount), style = small) }
-        space(4)
+        space(gap)
         line { left("Total", style = totalStyle); right(money(total), style = totalStyle) }
         space(12)
 
         text(FOOTER_MESSAGE, style = small, align = TextAlign.Center)
         space(12)
-        qr(invoiceDigits, align = TextAlign.Center)
-        space(8)
-        barcode(invoiceDigits, align = TextAlign.Center)
+        if (rasterExtras) {
+            qr(invoiceDigits, align = TextAlign.Center)
+            space(8)
+            barcode(invoiceDigits, align = TextAlign.Center)
+        } else {
+            // Text mode always lands here (no raster path); graphic mode lands here too when
+            // includeLogoQrBarcode is off, so the invoice number isn't silently dropped just
+            // because its scannable forms were.
+            text("Invoice #: $invoiceDigits", style = small, align = TextAlign.Center)
+        }
     }
 }
 

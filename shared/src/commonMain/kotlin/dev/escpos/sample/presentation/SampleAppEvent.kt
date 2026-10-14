@@ -2,6 +2,8 @@ package dev.escpos.sample.presentation
 
 import dev.escpos.core.CutMode
 import dev.escpos.core.RasterMode
+import dev.escpos.core.RuleStyle
+import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.TransportKind
 import dev.escpos.transport.bt.BluetoothDeviceInfo
 import dev.escpos.transport.serial.SerialPortInfo
@@ -25,6 +27,7 @@ sealed interface SampleAppEvent {
 
     // Bluetooth SPP (FR-6.4, FR-9.1)
     data class BluetoothDeviceSelected(val device: BluetoothDeviceInfo) : SampleAppEvent
+    data class BluetoothPacedChanged(val paced: Boolean) : SampleAppEvent
 
     /** Requests a re-list of paired devices — see `rememberBluetoothRefresh`'s KDoc for why this
      *  may trigger a runtime permission prompt before [SampleAppViewModel] actually acts on it. */
@@ -46,11 +49,24 @@ sealed interface SampleAppEvent {
     // Printer profile (FR-8.1, FR-8.2)
     data class ProfileNameChanged(val value: String) : SampleAppEvent
     data class DotWidthChanged(val value: String) : SampleAppEvent
+
+    /** Also resets the band height to that mode's own sensible default — see
+     *  [SampleAppViewModel]'s handling for why the dropdown alone isn't enough. */
     data class RasterModeChanged(val mode: RasterMode) : SampleAppEvent
     data class BandHeightChanged(val value: String) : SampleAppEvent
     data class CutChanged(val mode: CutMode) : SampleAppEvent
     data class DrawerPinChanged(val pin: Int) : SampleAppEvent
     data class FeedDotsAfterContentChanged(val value: String) : SampleAppEvent
+
+    // Print mode (Graphic / Text) and text mode's one printer-specific knob (FR-8.7)
+    data class PrintModeChanged(val mode: PrintMode) : SampleAppEvent
+    data class ColumnsOverrideChanged(val value: String) : SampleAppEvent
+
+    // Diagnostic-only receipt toggles — see ReceiptOptions's KDoc.
+    data class RuleStyleChanged(val style: RuleStyle) : SampleAppEvent
+    data class IncludeLogoQrBarcodeChanged(val include: Boolean) : SampleAppEvent
+    data class BoldHeadingsChanged(val bold: Boolean) : SampleAppEvent
+    data class ItemGapDotsChanged(val value: String) : SampleAppEvent
 
     // Receipt content (see dev.escpos.sample.domain.receipt.SampleInvoiceReceipt.kt)
     data class ItemCountChanged(val value: String) : SampleAppEvent
@@ -60,4 +76,10 @@ sealed interface SampleAppEvent {
     data object PrintReceipt : SampleAppEvent
     data object PrintDiagnostic : SampleAppEvent
     data object CheckPrinterStatus : SampleAppEvent
+
+    /** Testing-only — see `FeedAndCutUseCase`'s KDoc. */
+    data object FeedAndCut : SampleAppEvent
+
+    /** Testing-only — see `ReplayReferenceJobUseCase`'s KDoc. */
+    data object ReplayReferenceJob : SampleAppEvent
 }
