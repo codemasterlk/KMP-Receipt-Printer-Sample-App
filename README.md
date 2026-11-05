@@ -175,7 +175,7 @@ The form pane and live preview pane sit side by side above a 720dp width breakpo
 
 ## Configuring a printer
 
-1. Pick a transport in **Printer → Connection**.
+1. Pick a transport in **Printer settings → Connection**.
    - **TCP**: type the printer's IP and port (`9100` is the ESC/POS raw-printing default). There's no network scan — enter it manually.
    - **Bluetooth**: pair the printer in the OS Bluetooth settings first, then **Scan again** to list paired devices.
    - **USB**: plug the printer in via a host/OTG cable; the per-device permission prompt appears the first time you actually print.

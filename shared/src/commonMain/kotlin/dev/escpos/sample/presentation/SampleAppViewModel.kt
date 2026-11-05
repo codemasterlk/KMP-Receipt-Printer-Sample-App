@@ -168,6 +168,7 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
             is SampleAppEvent.BluetoothDeviceSelected -> setState { it.copy(selectedBluetoothDevice = event.device) }
             is SampleAppEvent.BluetoothPacedChanged -> setState { it.copy(bluetoothPaced = event.paced) }
             SampleAppEvent.RefreshBluetoothDevices -> refreshBluetoothDevices()
+            SampleAppEvent.BluetoothPermissionDenied -> setState { it.copy(bluetoothStatus = BLUETOOTH_PERMISSION_DENIED_MESSAGE) }
 
             is SampleAppEvent.UsbDeviceSelected -> setState { it.copy(selectedUsbDevice = event.device) }
             SampleAppEvent.RefreshUsbDevices -> setState { it.copy(usbDevices = repository.discoverUsbDevices()) }
@@ -400,5 +401,7 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
     private companion object {
         const val FIX_PROFILE_MESSAGE =
             "Fix the profile fields first — dot width and band height must be whole numbers"
+        const val BLUETOOTH_PERMISSION_DENIED_MESSAGE =
+            "Bluetooth permission denied — grant Nearby devices to list paired printers"
     }
 }

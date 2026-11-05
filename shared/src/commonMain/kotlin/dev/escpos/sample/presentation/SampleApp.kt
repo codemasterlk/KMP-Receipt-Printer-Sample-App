@@ -496,7 +496,7 @@ private fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewMod
                     onCheckedChange = { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!it)) },
                 )
                 Text(
-                    "Unpaced writes (diagnostic — no delay between Bluetooth writes)",
+                    "Unpaced writes (diagnostic — matches the reference app's zero-pacing send path)",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -508,7 +508,7 @@ private fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewMod
                 enabled = !uiState.printing && uiState.selectedBluetoothDevice != null,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Replay captured reference job (diagnostic)")
+                Text("Replay captured reference app bytes (diagnostic)")
             }
         }
 
@@ -807,7 +807,7 @@ private fun paperWidthLabel(dotWidth: String): String = when (dotWidth) {
 private fun rasterModeLabel(mode: RasterMode): String = when (mode) {
     RasterMode.EscAsterisk -> "ESC * — works everywhere"
     RasterMode.GsV0 -> "GS v 0 — faster, needs testing"
-    RasterMode.GsV0ContentAdaptive -> "GS v 0 (content-adaptive) — splits only at blank rows"
+    RasterMode.GsV0ContentAdaptive -> "GS v 0 (content-adaptive)"
 }
 
 /** A whole-row-clickable checkbox with a caption — the shape every diagnostic toggle in

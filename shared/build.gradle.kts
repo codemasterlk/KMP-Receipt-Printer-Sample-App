@@ -45,9 +45,8 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.compose.uiTooling)
-            // rememberBluetoothRefresh's Android actual: runtime permission request + Context.
+            // rememberBluetoothRefresh's Android actual: the runtime-permission launcher.
             implementation(libs.androidx.activity.compose)
-            implementation(libs.androidx.core.ktx)
         }
         commonMain.dependencies {
             implementation(libs.compose.runtime)

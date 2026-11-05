@@ -33,6 +33,10 @@ sealed interface SampleAppEvent {
      *  may trigger a runtime permission prompt before [SampleAppViewModel] actually acts on it. */
     data object RefreshBluetoothDevices : SampleAppEvent
 
+    /** The Android 12+ runtime permission prompt was answered "no" — surfaces a message in the
+     *  Bluetooth section instead of leaving a silently empty device list. */
+    data object BluetoothPermissionDenied : SampleAppEvent
+
     // USB (FR-6.6, FR-9.3)
     data class UsbDeviceSelected(val device: UsbDeviceInfo) : SampleAppEvent
     data object RefreshUsbDevices : SampleAppEvent

@@ -4,36 +4,33 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
 import dev.escpos.transport.bt.BluetoothPermissions
 
 /**
- * Android 12+ (API 31+) gates paired-device enumeration behind the runtime `BLUETOOTH_CONNECT`
- * permission (`escpos-transport-bt`'s own manifest declares it, along with `BLUETOOTH_SCAN`
- * requested alongside it — see [BluetoothPermissions.ANDROID_12_PLUS]'s KDoc). Below API 31
- * there is nothing to request: the legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` permissions are
- * install-time-granted.
+ * Android 12+ (API 31+) gates paired-device enumeration behind runtime Bluetooth permissions
+ * (`escpos-transport-bt`'s own manifest declares them; see [BluetoothPermissions.ANDROID_12_PLUS]).
+ * The prompt is launched every time — if everything is already granted it returns immediately with
+ * no dialog — and only a fully granted result refreshes the list; a denial reports
+ * [SampleAppEvent.BluetoothPermissionDenied] so the user sees why the list stays empty. Below API 31
+ * the legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` permissions are install-time-granted, so there is
+ * nothing to request and this enumerates straight away.
  */
 @Composable
 actual fun rememberBluetoothRefresh(viewModel: SampleAppViewModel): () -> Unit {
-    val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[android.Manifest.permission.BLUETOOTH_CONNECT] == true) {
-            viewModel.onEvent(SampleAppEvent.RefreshBluetoothDevices)
-        }
-    }
-    return remember(context) {
-        {
-            val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) ==
-                    android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                viewModel.onEvent(SampleAppEvent.RefreshBluetoothDevices)
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        viewModel.onEvent(
+            if (granted.values.all { it }) {
+                SampleAppEvent.RefreshBluetoothDevices
             } else {
-                launcher.launch(BluetoothPermissions.ANDROID_12_PLUS)
-            }
+                SampleAppEvent.BluetoothPermissionDenied
+            },
+        )
+    }
+    return {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            launcher.launch(BluetoothPermissions.ANDROID_12_PLUS)
+        } else {
+            viewModel.onEvent(SampleAppEvent.RefreshBluetoothDevices)
         }
     }
 }

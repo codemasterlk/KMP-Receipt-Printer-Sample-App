@@ -22,6 +22,6 @@ class ReplayReferenceJobUseCase(private val repository: PrinterRepository) {
 
     companion object {
         /** The label presentation logs this job under. */
-        const val LABEL = "Reference job replay (diagnostic)"
+        const val LABEL = "Reference capture replay (diagnostic)"
     }
 }

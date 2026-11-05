@@ -7,9 +7,9 @@ package dev.escpos.sample.presentation
  */
 enum class FormTab(val label: String) {
     /** Connection (transport/device) plus the printer profile — `ConnectionCard` + `ProfileCard`. */
-    PrinterSettings("Printer"),
+    PrinterSettings("Printer settings"),
     /** The fixed receipt content: item count and font pickers — `ReceiptContentCard`. */
-    ReceiptContent("Receipt"),
+    ReceiptContent("Receipt content"),
     /** This session's print history — `PrintLogCard`. */
-    PrintLog("Log"),
+    PrintLog("Print log"),
 }
