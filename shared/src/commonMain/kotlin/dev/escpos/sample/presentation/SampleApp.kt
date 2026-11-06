@@ -37,6 +37,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -198,17 +199,6 @@ private fun FormPane(
         ) {
             Text(if (uiState.printing) "Printing…" else "Print receipt")
         }
-        // Separate from "Print receipt" — a verification pattern, not the customer-facing content
-        // above. Which receipt this sends depends on the print mode (the checkerboard/fonts/QR-
-        // scale pattern in Graphic, the alignment/style/size/character-coverage pattern in Text) —
-        // enabled in both modes since both have one. See SampleAppViewModel's printDiagnostic.
-        OutlinedButton(
-            onClick = { viewModel.onEvent(SampleAppEvent.PrintDiagnostic) },
-            enabled = !uiState.printing,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Print diagnostic pattern")
-        }
         // FR-7.5 — only TCP/Bluetooth SPP actually answer; every other selection reports that
         // plainly instead of pretending to check (see CheckPrinterStatusUseCase's KDoc).
         OutlinedButton(
@@ -218,17 +208,115 @@ private fun FormPane(
         ) {
             Text("Check printer status (paper/cover)")
         }
-        // Testing-only isolation tool — see FeedAndCutUseCase's KDoc: sends INIT + feed + cut
-        // alone, nothing else, to tell apart "the cut command/transport path itself is the
-        // problem" from "something about a real receipt's content ahead of the cut is."
-        OutlinedButton(
-            onClick = { viewModel.onEvent(SampleAppEvent.FeedAndCut) },
-            enabled = !uiState.printing,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Feed + cut only (test)")
-        }
         uiState.printStatus?.let { status -> Text(status, textAlign = TextAlign.Start) }
+        DeveloperToolsCard(uiState, viewModel)
+    }
+}
+
+/**
+ * Collapsed-by-default home for everything that is for hardware bring-up rather than normal
+ * printing: the test prints, the Bluetooth A/B switches, and the receipt-content experiments.
+ * None of these settings are saved between launches.
+ */
+@Composable
+private fun DeveloperToolsCard(uiState: SampleAppUiState, viewModel: SampleAppViewModel) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Developer tools", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Hardware bring-up and experiments — not saved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        viewModel.onEvent(SampleAppEvent.DeveloperToolsExpandedChanged(!uiState.developerToolsExpanded))
+                    },
+                ) {
+                    Text(if (uiState.developerToolsExpanded) "Hide" else "Show")
+                }
+            }
+            if (uiState.developerToolsExpanded) {
+                HorizontalDivider()
+                Text("Test prints", style = MaterialTheme.typography.labelLarge)
+                // A verification pattern, not customer-facing content. Which receipt this sends
+                // depends on the print mode — see SampleAppViewModel's printDiagnostic.
+                OutlinedButton(
+                    onClick = { viewModel.onEvent(SampleAppEvent.PrintDiagnostic) },
+                    enabled = !uiState.printing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Print diagnostic pattern")
+                }
+                // See FeedAndCutUseCase's KDoc: sends INIT + feed + cut alone, to tell apart "the
+                // cut command/transport path is the problem" from "the receipt content ahead of it is."
+                OutlinedButton(
+                    onClick = { viewModel.onEvent(SampleAppEvent.FeedAndCut) },
+                    enabled = !uiState.printing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Feed + cut only (test)")
+                }
+                if (uiState.transportKind == TransportKind.Bluetooth) {
+                    // See ReplayReferenceJobUseCase's KDoc — sends a captured job's exact bytes
+                    // through this app's own connection, bypassing rendering entirely.
+                    OutlinedButton(
+                        onClick = { viewModel.onEvent(SampleAppEvent.ReplayReferenceJob) },
+                        enabled = !uiState.printing && uiState.selectedBluetoothDevice != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Replay captured reference app bytes (diagnostic)")
+                    }
+                    // See BluetoothSppTransport's `paced` KDoc. Off (paced) is the normal behavior.
+                    DiagnosticCheckbox(
+                        checked = !uiState.bluetoothPaced,
+                        onCheckedChange = { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!it)) },
+                        label = "Unpaced writes (diagnostic — matches the reference app's zero-pacing send path)",
+                    )
+                }
+
+                HorizontalDivider()
+                Text("Receipt experiments", style = MaterialTheme.typography.labelLarge)
+                // See RuleStyle's own KDoc. Off (Solid) is the receipt's original look.
+                DiagnosticCheckbox(
+                    checked = uiState.ruleStyle == RuleStyle.Dashed,
+                    onCheckedChange = {
+                        viewModel.onEvent(SampleAppEvent.RuleStyleChanged(if (it) RuleStyle.Dashed else RuleStyle.Solid))
+                    },
+                    label = "Dashed rules (diagnostic — avoids a solid full-width black line)",
+                )
+                // See ReceiptOptions.includeLogoQrBarcode's KDoc.
+                DiagnosticCheckbox(
+                    checked = !uiState.includeLogoQrBarcode,
+                    onCheckedChange = { viewModel.onEvent(SampleAppEvent.IncludeLogoQrBarcodeChanged(!it)) },
+                    label = "Drop logo/QR/barcode (diagnostic — isolates text-and-rules content)",
+                )
+                // See ReceiptOptions.boldHeadings's KDoc.
+                DiagnosticCheckbox(
+                    checked = !uiState.boldHeadings,
+                    onCheckedChange = { viewModel.onEvent(SampleAppEvent.BoldHeadingsChanged(!it)) },
+                    label = "Normal-weight headings (diagnostic — tests bold stroke density)",
+                )
+                // See ReceiptOptions.itemGapDots's KDoc.
+                OutlinedTextField(
+                    value = uiState.itemGapDots,
+                    onValueChange = { viewModel.onEvent(SampleAppEvent.ItemGapDotsChanged(it)) },
+                    label = { Text("Item gap (dots, diagnostic)") },
+                    placeholder = { Text("6") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 
@@ -466,49 +554,25 @@ private fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewMod
                 OutlinedButton(onClick = onRefreshBluetooth) { Text("Scan again") }
             }
             uiState.bluetoothStatus?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (uiState.bluetoothDevices.isEmpty()) {
+            // The saved device (restored on launch) may not be in the scanned list yet — keep it
+            // visible and selectable so the setup still reads as "ready" before any scan.
+            val shown = (listOfNotNull(uiState.selectedBluetoothDevice) + uiState.bluetoothDevices)
+                .distinctBy { it.address }
+            if (shown.isEmpty()) {
                 Text(
                     "No paired devices found yet — pair the printer in your OS Bluetooth settings first.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            uiState.bluetoothDevices.forEach { device ->
+            shown.forEach { device ->
                 DeviceRow(
-                    selected = uiState.selectedBluetoothDevice == device,
+                    selected = uiState.selectedBluetoothDevice?.address == device.address,
                     onClick = { viewModel.onEvent(SampleAppEvent.BluetoothDeviceSelected(device)) },
                     title = device.name ?: "(unnamed)",
                     subtitle = device.address,
-                    statusLabel = "Paired",
+                    statusLabel = if (uiState.bluetoothDevices.any { it.address == device.address }) "Paired" else "Saved",
                 )
-            }
-            // Diagnostic-only — see BluetoothSppTransport's `paced` KDoc. Off (paced) is the
-            // normal, real-hardware-confirmed behavior; check this to A/B test against another
-            // app's own zero-pacing Bluetooth send path on the same printer.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!uiState.bluetoothPaced)) },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(
-                    checked = !uiState.bluetoothPaced,
-                    onCheckedChange = { viewModel.onEvent(SampleAppEvent.BluetoothPacedChanged(!it)) },
-                )
-                Text(
-                    "Unpaced writes (diagnostic — matches the reference app's zero-pacing send path)",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            // See ReplayReferenceJobUseCase's KDoc — sends a real captured reference job's exact
-            // bytes through this app's own connection, bypassing rendering entirely, to isolate
-            // whether a difference is in the bytes or in the connection.
-            OutlinedButton(
-                onClick = { viewModel.onEvent(SampleAppEvent.ReplayReferenceJob) },
-                enabled = !uiState.printing && uiState.selectedBluetoothDevice != null,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Replay captured reference app bytes (diagnostic)")
             }
         }
 
@@ -709,42 +773,6 @@ private fun ProfileCard(uiState: SampleAppUiState, viewModel: SampleAppViewModel
                     }
                 }
             }
-            // Diagnostic-only — see RuleStyle's own KDoc. Off (Solid) is the receipt's original
-            // look; check this to A/B test whether a solid full-width rule's own dot density is
-            // behind a residual feed roughness real-hardware testing traced to it.
-            DiagnosticCheckbox(
-                checked = uiState.ruleStyle == RuleStyle.Dashed,
-                onCheckedChange = {
-                    viewModel.onEvent(SampleAppEvent.RuleStyleChanged(if (it) RuleStyle.Dashed else RuleStyle.Solid))
-                },
-                label = "Dashed rules (diagnostic — avoids a solid full-width black line)",
-            )
-            // Diagnostic-only — see ReceiptOptions.includeLogoQrBarcode's KDoc. Checked drops the
-            // logo/QR/barcode (all high dot-density blocks), isolating whether they're behind a
-            // residual feed roughness the rule style's own fix didn't fully explain.
-            DiagnosticCheckbox(
-                checked = !uiState.includeLogoQrBarcode,
-                onCheckedChange = { viewModel.onEvent(SampleAppEvent.IncludeLogoQrBarcodeChanged(!it)) },
-                label = "Drop logo/QR/barcode (diagnostic — isolates text-and-rules content)",
-            )
-            // Diagnostic-only — see ReceiptOptions.boldHeadings's KDoc. Checked prints the store
-            // name and Total at normal weight, isolating whether bold stroke density (not size)
-            // is behind whatever's left once the logo/QR/barcode test found no difference.
-            DiagnosticCheckbox(
-                checked = !uiState.boldHeadings,
-                onCheckedChange = { viewModel.onEvent(SampleAppEvent.BoldHeadingsChanged(!it)) },
-                label = "Normal-weight headings (diagnostic — tests bold stroke density)",
-            )
-            // Diagnostic-only — see ReceiptOptions.itemGapDots's KDoc. Real-hardware testing found
-            // the bad sound clustering around every tight line-to-line gap, the tightest being the
-            // 6-dot item gap; adjustable since the right value isn't known yet.
-            OutlinedTextField(
-                value = uiState.itemGapDots,
-                onValueChange = { viewModel.onEvent(SampleAppEvent.ItemGapDotsChanged(it)) },
-                label = { Text("Item gap (dots, diagnostic)") },
-                placeholder = { Text("6") },
-                modifier = Modifier.fillMaxWidth(),
-            )
             OutlinedTextField(
                 value = uiState.dotWidth,
                 onValueChange = { viewModel.onEvent(SampleAppEvent.DotWidthChanged(it)) },

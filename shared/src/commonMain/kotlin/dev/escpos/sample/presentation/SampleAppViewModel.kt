@@ -10,13 +10,17 @@ import dev.escpos.core.RuleStyle
 import dev.escpos.core.textDiagnosticReceipt
 import dev.escpos.fonts.diagnosticReceipt
 import dev.escpos.sample.data.platform.PlatformContext
+import dev.escpos.sample.data.platform.createKeyValueStorage
 import dev.escpos.sample.data.platform.logTimestampNow
 import dev.escpos.sample.data.repository.PrinterRepositoryImpl
+import dev.escpos.sample.data.repository.SetupRepositoryImpl
 import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.ProfileSettings
 import dev.escpos.sample.domain.model.ReceiptOptions
+import dev.escpos.sample.domain.model.SavedSetup
 import dev.escpos.sample.domain.model.TransportKind
 import dev.escpos.sample.domain.model.TransportSelection
+import dev.escpos.sample.domain.model.availableTransportKinds
 import dev.escpos.sample.domain.receipt.customInvoiceReceipt
 import dev.escpos.sample.domain.usecase.CheckPrinterStatusUseCase
 import dev.escpos.sample.domain.usecase.FeedAndCutUseCase
@@ -28,11 +32,13 @@ import dev.escpos.sample.domain.usecase.SendResult
 import dev.escpos.sample.domain.usecase.StatusCheckResult
 import dev.escpos.transport.bt.MissingBluetoothPermissionException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -51,12 +57,17 @@ import kotlinx.coroutines.launch
  * its result. That mapping step is what keeps the domain layer from ever depending on this
  * presentation-layer state type — see each domain model's KDoc.
  *
- * Two things happen reactively, in [init], rather than as explicit events the UI has to trigger:
+ * Three things happen reactively, in [init], rather than as explicit events the UI has to trigger:
  * the preview re-renders whenever a field that changes it changes (not on every unrelated
- * keystroke, e.g. typing a TCP host), and a device-based transport's device list re-populates the
- * moment its tab is selected. Driving these off [uiState] itself — not a UI-side `LaunchedEffect`
- * — keeps [SampleApp] a pure "dispatch events, render state" view with no timing decisions of its
- * own to get wrong.
+ * keystroke, e.g. typing a TCP host), a device-based transport's device list re-populates the
+ * moment its tab is selected, and the printer setup is saved (debounced) whenever it changes.
+ * Driving these off [uiState] itself — not a UI-side `LaunchedEffect` — keeps [SampleApp] a pure
+ * "dispatch events, render state" view with no timing decisions of its own to get wrong.
+ *
+ * The saved setup (`SetupRepository`) is loaded once at construction and applied over the
+ * [SampleAppUiState] defaults. Devices are remembered by identity — a Bluetooth device is restored
+ * directly, USB/serial/spooler devices are re-selected once a scan finds the matching one. The
+ * diagnostic toggles under "Developer tools" are deliberately never saved.
  *
  * At most one job (print, status check, feed+cut, replay) runs at a time — see [runExclusive].
  *
@@ -70,16 +81,24 @@ import kotlinx.coroutines.launch
  * launch one.
  */
 class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineScope) {
-    // The one place this app picks a concrete PrinterRepository — everything below this line
-    // (use cases, and this class itself) only ever depends on the domain-layer interface.
+    // The one place this app picks concrete repositories — everything below this line (use cases,
+    // and this class itself) only ever depends on the domain-layer interfaces.
     private val repository = PrinterRepositoryImpl(context)
+    private val setupRepository = SetupRepositoryImpl(createKeyValueStorage(context))
     private val renderPreview = RenderPreviewUseCase(repository)
     private val sendReceipt = SendReceiptUseCase(repository)
     private val checkPrinterStatus = CheckPrinterStatusUseCase(repository)
     private val feedAndCut = FeedAndCutUseCase(repository)
     private val replayReferenceJob = ReplayReferenceJobUseCase(repository)
 
-    private val _uiState = MutableStateFlow(SampleAppUiState())
+    /** What was saved last launch, read once and synchronously so the very first frame already
+     *  shows the remembered setup instead of flashing the defaults. Also what [toSavedSetup] falls
+     *  back to for a USB/serial/spooler device that hasn't been found again yet — without that,
+     *  saving any unrelated field before the device list refreshes would erase the remembered
+     *  device. */
+    private val savedAtLaunch: SavedSetup = setupRepository.load()
+
+    private val _uiState = MutableStateFlow(SampleAppUiState().withSavedSetup(savedAtLaunch))
 
     /** The current, immutable snapshot [SampleApp] renders — collect with `collectAsState()`. */
     val uiState: StateFlow<SampleAppUiState> = _uiState.asStateFlow()
@@ -91,11 +110,21 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
         scope.launch {
             uiState.map { it.transportKind }.distinctUntilChanged().collectLatest { kind ->
                 when (kind) {
-                    TransportKind.Usb -> setState { it.copy(usbDevices = repository.discoverUsbDevices()) }
-                    TransportKind.Serial -> setState { it.copy(serialPortList = repository.discoverSerialPorts()) }
-                    TransportKind.Spooler -> setState { it.copy(spoolerPrinterList = repository.discoverSpoolerPrinters()) }
+                    TransportKind.Usb -> refreshUsbDevices()
+                    TransportKind.Serial -> refreshSerialPorts()
+                    TransportKind.Spooler -> refreshSpoolerPrinters()
                     else -> Unit
                 }
+            }
+        }
+        // Saves the setup whenever it changes. `drop(1)` skips the initial value (nothing changed
+        // yet — and on a first run there's nothing worth writing); `collectLatest` + `delay` is a
+        // debounce without the experimental `debounce` operator: each keystroke cancels the
+        // pending write, so typing an IP address saves once, after the last digit.
+        scope.launch {
+            uiState.map { it.toSavedSetup(savedAtLaunch) }.distinctUntilChanged().drop(1).collectLatest { setup ->
+                delay(SAVE_DEBOUNCE_MILLIS)
+                setupRepository.save(setup)
             }
         }
     }
@@ -148,6 +177,57 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
         spoolerPrinter = selectedSpoolerPrinter,
     )
 
+    /** Lays [saved] over this state's own defaults — only what was actually saved is applied, and
+     *  a saved transport this platform doesn't offer (a COM port remembered on a build that has no
+     *  serial support) is ignored rather than selected. USB/serial/spooler selections are *not*
+     *  applied here: they need the live device list, so [refreshUsbDevices] and friends re-match
+     *  them once it's been scanned. A Bluetooth device is restored directly — it's just a name and
+     *  an address, which is all the transport needs, so printing works before any scan. */
+    private fun SampleAppUiState.withSavedSetup(saved: SavedSetup) = copy(
+        transportKind = saved.transportKind?.takeIf { it in availableTransportKinds() } ?: transportKind,
+        host = saved.host ?: host,
+        port = saved.port ?: port,
+        selectedBluetoothDevice = saved.bluetoothDevice ?: selectedBluetoothDevice,
+        serialBaudRate = saved.serialBaudRate ?: serialBaudRate,
+        profileName = saved.profileName ?: profileName,
+        dotWidth = saved.dotWidth ?: dotWidth,
+        rasterMode = saved.rasterMode ?: rasterMode,
+        bandHeight = saved.bandHeight ?: bandHeight,
+        cut = saved.cut ?: cut,
+        drawerPin = saved.drawerPin ?: drawerPin,
+        feedDotsAfterContent = saved.feedDotsAfterContent ?: feedDotsAfterContent,
+        printMode = saved.printMode ?: printMode,
+        columnsOverride = saved.columnsOverride ?: columnsOverride,
+        itemCount = saved.itemCount ?: itemCount,
+        contentFontId = saved.contentFontId ?: contentFontId,
+    )
+
+    /** The part of this state worth remembering — see [SavedSetup] for what's deliberately left
+     *  out. [fallback] supplies a USB/serial/spooler device that was remembered but hasn't been
+     *  found again yet this session, so it isn't forgotten just because nothing has re-selected it. */
+    private fun SampleAppUiState.toSavedSetup(fallback: SavedSetup) = SavedSetup(
+        transportKind = transportKind,
+        host = host,
+        port = port,
+        bluetoothDevice = selectedBluetoothDevice ?: fallback.bluetoothDevice,
+        usbVendorId = selectedUsbDevice?.vendorId ?: fallback.usbVendorId,
+        usbProductId = selectedUsbDevice?.productId ?: fallback.usbProductId,
+        serialPortName = selectedSerialPort?.systemPortName ?: fallback.serialPortName,
+        serialBaudRate = serialBaudRate,
+        spoolerPrinterName = selectedSpoolerPrinter?.name ?: fallback.spoolerPrinterName,
+        profileName = profileName,
+        dotWidth = dotWidth,
+        rasterMode = rasterMode,
+        bandHeight = bandHeight,
+        cut = cut,
+        drawerPin = drawerPin,
+        feedDotsAfterContent = feedDotsAfterContent,
+        printMode = printMode,
+        columnsOverride = columnsOverride,
+        itemCount = itemCount,
+        contentFontId = contentFontId,
+    )
+
     private fun SampleAppUiState.toReceiptOptions() = ReceiptOptions(
         mode = printMode,
         ruleStyle = ruleStyle,
@@ -160,6 +240,7 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
     fun onEvent(event: SampleAppEvent) {
         when (event) {
             is SampleAppEvent.FormTabChanged -> setState { it.copy(formTab = event.tab) }
+            is SampleAppEvent.DeveloperToolsExpandedChanged -> setState { it.copy(developerToolsExpanded = event.expanded) }
             is SampleAppEvent.TransportKindChanged -> setState { it.copy(transportKind = event.kind) }
 
             is SampleAppEvent.HostChanged -> setState { it.copy(host = event.value) }
@@ -171,14 +252,14 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
             SampleAppEvent.BluetoothPermissionDenied -> setState { it.copy(bluetoothStatus = BLUETOOTH_PERMISSION_DENIED_MESSAGE) }
 
             is SampleAppEvent.UsbDeviceSelected -> setState { it.copy(selectedUsbDevice = event.device) }
-            SampleAppEvent.RefreshUsbDevices -> setState { it.copy(usbDevices = repository.discoverUsbDevices()) }
+            SampleAppEvent.RefreshUsbDevices -> refreshUsbDevices()
 
             is SampleAppEvent.SerialPortSelected -> setState { it.copy(selectedSerialPort = event.port) }
             is SampleAppEvent.SerialBaudRateChanged -> setState { it.copy(serialBaudRate = event.value) }
-            SampleAppEvent.RefreshSerialPorts -> setState { it.copy(serialPortList = repository.discoverSerialPorts()) }
+            SampleAppEvent.RefreshSerialPorts -> refreshSerialPorts()
 
             is SampleAppEvent.SpoolerPrinterSelected -> setState { it.copy(selectedSpoolerPrinter = event.printer) }
-            SampleAppEvent.RefreshSpoolerPrinters -> setState { it.copy(spoolerPrinterList = repository.discoverSpoolerPrinters()) }
+            SampleAppEvent.RefreshSpoolerPrinters -> refreshSpoolerPrinters()
 
             is SampleAppEvent.ProfileNameChanged -> setState { it.copy(profileName = event.value) }
             is SampleAppEvent.DotWidthChanged -> setState { it.copy(dotWidth = event.value) }
@@ -222,6 +303,47 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
     private fun selectRasterMode(mode: RasterMode) {
         val bandHeight = if (mode == RasterMode.GsV0) DEFAULT_GS_V0_BAND_HEIGHT_ROWS else ESC_ASTERISK_BAND_ROWS
         setState { it.copy(rasterMode = mode, bandHeight = bandHeight.toString()) }
+    }
+
+    // USB, serial, and spooler selections can't be restored directly (their platform handles aren't
+    // stable across launches — see SavedSetup), so each refresh re-matches the remembered device
+    // against the freshly scanned list. Only when nothing is selected yet: a user's own choice,
+    // made after the scan, is never overridden.
+
+    private fun refreshUsbDevices() {
+        val found = repository.discoverUsbDevices()
+        setState { s ->
+            s.copy(
+                usbDevices = found,
+                selectedUsbDevice = s.selectedUsbDevice ?: found.firstOrNull {
+                    it.vendorId == savedAtLaunch.usbVendorId && it.productId == savedAtLaunch.usbProductId
+                },
+            )
+        }
+    }
+
+    private fun refreshSerialPorts() {
+        val found = repository.discoverSerialPorts()
+        setState { s ->
+            s.copy(
+                serialPortList = found,
+                selectedSerialPort = s.selectedSerialPort ?: found.firstOrNull {
+                    it.systemPortName == savedAtLaunch.serialPortName
+                },
+            )
+        }
+    }
+
+    private fun refreshSpoolerPrinters() {
+        val found = repository.discoverSpoolerPrinters()
+        setState { s ->
+            s.copy(
+                spoolerPrinterList = found,
+                selectedSpoolerPrinter = s.selectedSpoolerPrinter ?: found.firstOrNull {
+                    it.name == savedAtLaunch.spoolerPrinterName
+                },
+            )
+        }
     }
 
     /** Called once the caller has already ensured Bluetooth runtime permission is granted (or
@@ -399,6 +521,10 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
     }
 
     private companion object {
+        /** How long a setup change waits for a further change before it's written — long enough
+         *  that typing an IP address is one write, short enough that a quick quit loses nothing. */
+        const val SAVE_DEBOUNCE_MILLIS = 300L
+
         const val FIX_PROFILE_MESSAGE =
             "Fix the profile fields first — dot width and band height must be whole numbers"
         const val BLUETOOTH_PERMISSION_DENIED_MESSAGE =

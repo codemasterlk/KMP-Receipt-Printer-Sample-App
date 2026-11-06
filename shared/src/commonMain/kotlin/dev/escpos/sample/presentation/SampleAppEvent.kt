@@ -19,6 +19,7 @@ import dev.escpos.transport.usb.UsbDeviceInfo
  */
 sealed interface SampleAppEvent {
     data class FormTabChanged(val tab: FormTab) : SampleAppEvent
+    data class DeveloperToolsExpandedChanged(val expanded: Boolean) : SampleAppEvent
     data class TransportKindChanged(val kind: TransportKind) : SampleAppEvent
 
     // TCP (FR-6.3)

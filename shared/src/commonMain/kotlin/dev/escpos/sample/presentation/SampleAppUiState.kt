@@ -49,6 +49,10 @@ data class PrintLogEntry(
 data class SampleAppUiState(
     /** Which of the three panes `FormPane` currently shows — see [FormTab]'s KDoc. */
     val formTab: FormTab = FormTab.PrinterSettings,
+
+    /** Whether the "Developer tools" card — the diagnostics and experiments — is open. Collapsed
+     *  by default and never saved: it's a per-session convenience, not part of the setup. */
+    val developerToolsExpanded: Boolean = false,
     val transportKind: TransportKind = availableTransportKinds().first(),
 
     // TCP (FR-6.3)

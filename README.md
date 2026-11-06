@@ -53,10 +53,10 @@ Graphic mode is this library's main pipeline, and the sample's default. The libr
 **Printer setup**
 - Five transports, one picker (see [below](#supported-transports))
 - Full `PrinterProfile` control: paper width (80 mm / 58 mm), raster command (`ESC *`, `GS v 0`, or content-adaptive `GS v 0`), band height, partial/full cut, drawer pin, feed-before-cut offset
-- **Diagnostic print** — mode-aware: Graphic sends a checkerboard raster-transposition test, every bundled font, and QR module scale; Text sends alignment, bold/underline/size (1×–8×), and full printable-ASCII coverage — for bring-up on a new printer
+- **Saved setup** — transport, connection details (host/port, Bluetooth device, USB/serial/spooler selection), the printer profile, print mode and receipt content settings are remembered between launches (SharedPreferences on Android, `java.util.prefs` on Desktop, `NSUserDefaults` on iOS). USB, serial and spooler devices are re-selected once a scan finds the saved one
 - **Status check** — polls `DLE EOT` for paper-out / cover-open on transports that answer it (TCP, Bluetooth SPP)
 - **Print log** — every print this session, success or failure, with the real underlying I/O error (not just a generic wrapper message) and per-job stats (payload size, write count, timing, raster-vs-text byte breakdown)
-- **Feed-roughness diagnostics** — dashed rules, drop logo/QR/barcode, normal-weight headings, adjustable item gap, unpaced Bluetooth writes, a bare feed+cut test, and a replay of a captured reference print job (the exact bytes of a job a third-party app prints smoothly) — tools for isolating whether a printer's rough feed comes from the bytes or from the connection
+- **Developer tools** — a collapsed card at the bottom of the form that keeps the bring-up tooling out of the way. *Test prints:* a mode-aware **diagnostic pattern** (Graphic sends a checkerboard raster-transposition test, every bundled font, and QR module scale; Text sends alignment, bold/underline/size (1×–8×), and full printable-ASCII coverage), a bare feed+cut test, and — on Bluetooth — a replay of a captured reference print job (the exact bytes of a job a third-party app prints smoothly) plus an unpaced-writes switch. *Receipt experiments:* dashed rules, drop logo/QR/barcode, normal-weight headings, adjustable item gap — for isolating whether a printer's rough feed comes from the bytes or from the connection. None of these are saved
 - **One job at a time** — an atomic guard stops a fast double-tap from opening two connections to the same printer
 
 ## Supported transports
@@ -103,12 +103,15 @@ flowchart LR
     VM --> UC["Use cases\nRenderPreview · SendReceipt\nCheckPrinterStatus · FeedAndCut\nReplayReferenceJob"]
     UC --> R["PrinterRepository\n(interface)"]
     R -.implemented by.-> RI["PrinterRepositoryImpl\n(escpos transports, renderer, fonts)"]
+    VM --> S["SetupRepository\n(interface)"]
+    S -.implemented by.-> SI["SetupRepositoryImpl\n(KeyValueStorage per platform)"]
 ```
 
 - **Events, not mutation.** The UI never writes a state field. Every interaction is a `SampleAppEvent` passed to `SampleAppViewModel.onEvent`, which publishes a new immutable `SampleAppUiState`.
 - **Use cases hold the logic.** Rendering a preview, sending a job, checking status, and the two diagnostic jobs each live in a use case; `PrintJobRunner` is the shared connect → session → stats → close path underneath them.
 - **Domain models, not UI state.** The view model maps `SampleAppUiState` into `ProfileSettings`, `TransportSelection`, and `ReceiptOptions` before calling a use case, so the domain layer never depends on presentation. Use cases also return raw data (packed bitmap rows, preview lines) — turning that into an `ImageBitmap` is a presentation concern.
-- **Reactive side effects live in the view model.** The preview re-renders when a field that affects it changes, and a device list repopulates when its transport is selected — driven off `uiState`, not a UI-side `LaunchedEffect`.
+- **Reactive side effects live in the view model.** The preview re-renders when a field that affects it changes, a device list repopulates when its transport is selected, and the printer setup is saved (debounced 300 ms) whenever it changes — driven off `uiState`, not a UI-side `LaunchedEffect`.
+- **Saved setup is a repository too.** `SetupRepository` loads/saves a `SavedSetup` (all fields nullable, `null` = never saved, so defaults still apply); `SetupRepositoryImpl` writes flat string entries through a small `KeyValueStorage` with one `actual` per platform. A stale or unrecognised stored value is ignored rather than ever blocking startup.
 - **One job at a time.** `runExclusive` claims a single "job running" slot atomically.
 - **A plain class, not `androidx.lifecycle.ViewModel`** — a `ViewModelStoreOwner` isn't guaranteed on the Desktop and iOS entry points, and this screen has nothing worth surviving process death for.
 
@@ -129,14 +132,15 @@ KMPEscPosPrinterSampleApp/
         │       └── dev/escpos/sample/
         │           ├── domain/                  no dependency on presentation or data
         │           │   ├── model/               TransportKind, PrintMode, ProfileSettings,
-        │           │   │                        TransportSelection, ReceiptOptions
+        │           │   │                        TransportSelection, ReceiptOptions, SavedSetup
         │           │   ├── receipt/             SampleInvoiceReceipt (fixed 100-item content)
-        │           │   ├── repository/          PrinterRepository (interface)
+        │           │   ├── repository/          PrinterRepository, SetupRepository (interfaces)
         │           │   └── usecase/             RenderPreview, SendReceipt, CheckPrinterStatus,
         │           │                            FeedAndCut, ReplayReferenceJob (+ PrintJobRunner)
         │           ├── data/                    depends only on domain
-        │           │   ├── repository/          PrinterRepositoryImpl
-        │           │   └── platform/            PlatformContext, SampleFonts, ReferenceJob, timestamp
+        │           │   ├── repository/          PrinterRepositoryImpl, SetupRepositoryImpl
+        │           │   └── platform/            PlatformContext, KeyValueStorage, SampleFonts,
+        │           │                            ReferenceJob, timestamp
         │           └── presentation/            the only layer with Compose UI
         │               ├── SampleApp, SampleAppViewModel, SampleAppUiState, SampleAppEvent
         │               └── FormTab, BluetoothRefresh, PreviewBitmap, PlatformLabel
@@ -181,7 +185,7 @@ The form pane and live preview pane sit side by side above a 720dp width breakpo
    - **USB**: plug the printer in via a host/OTG cable; the per-device permission prompt appears the first time you actually print.
    - **Serial / Spooler** (Windows only): pick a COM port or an installed print queue. A spooler queue needs a driver that passes RAW bytes through untouched — "Generic / Text Only" or a vendor ESC/POS driver, not a PostScript/PCL driver that rasterizes the stream.
 2. Set the **paper width** (576 dots / 80 mm, or 384 dots / 58 mm) and leave everything else at its default unless a specific printer needs it.
-3. Hit **Print diagnostic pattern** first on any printer you haven't used before — it's the fastest way to catch a raster-transposition bug, a missing font, or a bad QR scale before sending real content.
+3. Open **Developer tools** and hit **Print diagnostic pattern** first on any printer you haven't used before — it's the fastest way to catch a raster-transposition bug, a missing font, or a bad QR scale before sending real content. Your setup is saved automatically, so this only needs doing once per printer.
 4. If the cutter slices into your receipt's actual content instead of past it, raise **Feed before cut** — there's no way to detect the right offset from software, only from what actually gets cut off in practice.
 
 ## The library
@@ -380,5 +384,5 @@ Everything "Print receipt" sends comes from this one file. Nothing in it is user
 - **No network discovery.** TCP is manual IP entry only; USB/Bluetooth are enumeration of what's already attached/paired, not active scanning.
 - **Serial and the print spooler are Windows/JVM-only** — both report `Unavailable` on Android and iOS.
 - **Text mode is English/Latin only** and has no logo, QR, or barcode — see the receipt walkthrough above.
-- **The diagnostic controls are for hardware bring-up, not end users.** The reference-job replay needs a Bluetooth device selected and embeds a 39 KB captured print job (`composeResources/files/reference_job_capture.bin`) taken from a third-party app's Bluetooth traffic.
+- **The Developer tools are for hardware bring-up, not end users**, and their settings (dashed rules, dropped logo/QR/barcode, normal headings, item gap, unpaced Bluetooth) are deliberately not saved — they reset every launch so an experiment can't silently stick. The reference-job replay needs a Bluetooth device selected and embeds a 39 KB captured print job (`composeResources/files/reference_job_capture.bin`) taken from a third-party app's Bluetooth traffic.
 - The library is pre-release (`0.1.0-alpha02`) — expect API changes before a stable release.
