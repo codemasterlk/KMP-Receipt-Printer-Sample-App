@@ -50,6 +50,7 @@ class SetupRepositoryImpl(private val storage: KeyValueStorage) : SetupRepositor
             columnsOverride = storage.getString(COLUMNS_OVERRIDE),
             itemCount = storage.getString(ITEM_COUNT),
             contentFontId = storage.getString(CONTENT_FONT_ID),
+            setupWizardCompleted = storage.getString(WIZARD_COMPLETED)?.toBooleanStrictOrNull(),
         )
     }
 
@@ -77,6 +78,7 @@ class SetupRepositoryImpl(private val storage: KeyValueStorage) : SetupRepositor
             COLUMNS_OVERRIDE to setup.columnsOverride,
             ITEM_COUNT to setup.itemCount,
             CONTENT_FONT_ID to setup.contentFontId,
+            WIZARD_COMPLETED to setup.setupWizardCompleted?.toString(),
         )
         // Storage can block on disk (the Windows registry in particular) — keep it off the caller.
         withContext(Dispatchers.IO) { storage.putStrings(values) }
@@ -108,5 +110,6 @@ class SetupRepositoryImpl(private val storage: KeyValueStorage) : SetupRepositor
         const val COLUMNS_OVERRIDE = "profile.columnsOverride"
         const val ITEM_COUNT = "receipt.itemCount"
         const val CONTENT_FONT_ID = "receipt.contentFontId"
+        const val WIZARD_COMPLETED = "setup.wizardCompleted"
     }
 }

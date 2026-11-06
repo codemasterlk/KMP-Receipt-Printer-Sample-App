@@ -18,10 +18,19 @@ import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.ProfileSettings
 import dev.escpos.sample.domain.model.ReceiptOptions
 import dev.escpos.sample.domain.model.SavedSetup
+import dev.escpos.sample.domain.model.SetupTuning
 import dev.escpos.sample.domain.model.TransportKind
 import dev.escpos.sample.domain.model.TransportSelection
+import dev.escpos.sample.domain.model.TuningFields
+import dev.escpos.sample.domain.model.TuningOutcome
+import dev.escpos.sample.domain.model.WizardAnswer
+import dev.escpos.sample.domain.model.WizardStep
 import dev.escpos.sample.domain.model.availableTransportKinds
 import dev.escpos.sample.domain.receipt.customInvoiceReceipt
+import dev.escpos.sample.domain.receipt.wizardConnectionTestReceipt
+import dev.escpos.sample.domain.receipt.wizardCutFeedTestReceipt
+import dev.escpos.sample.domain.receipt.wizardSmoothnessTestReceipt
+import dev.escpos.sample.domain.receipt.wizardWidthTestReceipt
 import dev.escpos.sample.domain.usecase.CheckPrinterStatusUseCase
 import dev.escpos.sample.domain.usecase.FeedAndCutUseCase
 import dev.escpos.sample.domain.usecase.PreviewResult
@@ -98,7 +107,18 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
      *  device. */
     private val savedAtLaunch: SavedSetup = setupRepository.load()
 
-    private val _uiState = MutableStateFlow(SampleAppUiState().withSavedSetup(savedAtLaunch))
+    /** A genuine first run — nothing saved and the wizard never finished — opens the wizard by
+     *  itself. Someone who already has a saved setup is never interrupted by it. */
+    private val firstRun: Boolean = savedAtLaunch.setupWizardCompleted != true && savedAtLaunch.transportKind == null
+
+    private val _uiState = MutableStateFlow(
+        SampleAppUiState().withSavedSetup(savedAtLaunch).let {
+            if (firstRun) it.copy(wizard = WizardState(open = true)) else it
+        },
+    )
+
+    /** The state the wizard opened on, so Cancel can put every setting back. Null when closed. */
+    private var wizardBaseline: SampleAppUiState? = if (firstRun) _uiState.value else null
 
     /** The current, immutable snapshot [SampleApp] renders — collect with `collectAsState()`. */
     val uiState: StateFlow<SampleAppUiState> = _uiState.asStateFlow()
@@ -200,6 +220,7 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
         columnsOverride = saved.columnsOverride ?: columnsOverride,
         itemCount = saved.itemCount ?: itemCount,
         contentFontId = saved.contentFontId ?: contentFontId,
+        wizardCompleted = saved.setupWizardCompleted ?: wizardCompleted,
     )
 
     /** The part of this state worth remembering — see [SavedSetup] for what's deliberately left
@@ -226,6 +247,7 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
         columnsOverride = columnsOverride,
         itemCount = itemCount,
         contentFontId = contentFontId,
+        setupWizardCompleted = wizardCompleted,
     )
 
     private fun SampleAppUiState.toReceiptOptions() = ReceiptOptions(
@@ -285,7 +307,248 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
             SampleAppEvent.CheckPrinterStatus -> scope.launch { runCheckPrinterStatus() }
             SampleAppEvent.FeedAndCut -> scope.launch { runFeedAndCut() }
             SampleAppEvent.ReplayReferenceJob -> scope.launch { runReplayReferenceJob() }
+
+            SampleAppEvent.WizardStart -> wizardStart()
+            SampleAppEvent.WizardCancel -> wizardCancel()
+            SampleAppEvent.WizardNext -> enterStep(nextWizardStep(_uiState.value.wizard))
+            SampleAppEvent.WizardBack -> goToStep(previousWizardStep(_uiState.value.wizard))
+            SampleAppEvent.WizardPrintTest -> scope.launch { wizardPrintTest() }
+            is SampleAppEvent.WizardAnswered -> wizardAnswered(event.answer)
+            SampleAppEvent.WizardUndo -> wizardUndo()
+            SampleAppEvent.WizardFinish -> wizardFinish(formTab = null)
+            SampleAppEvent.WizardOpenFullForm -> wizardFinish(formTab = FormTab.PrinterSettings)
         }
+    }
+
+    // ---- Setup wizard ----------------------------------------------------------------------
+    //
+    // The wizard edits the same SampleAppUiState fields the full form does, so the two never
+    // disagree and the debounced auto-save above persists wizard changes with no extra code. What
+    // it adds is a way back: the state it opened on is kept in [wizardBaseline], and Cancel puts
+    // every setting back. The printer never answers, so the user's taps ([WizardAnswer]) are the
+    // only input that moves the flow; [SetupTuning] decides what each one changes.
+
+    private fun wizardStart() {
+        wizardBaseline = _uiState.value
+        setState { it.copy(wizard = WizardState(open = true)) }
+    }
+
+    /** Close without keeping anything: every setting returns to what it was when the wizard
+     *  opened. Marked completed so a cancelled first run is not nagged about again. */
+    private fun wizardCancel() {
+        val base = wizardBaseline
+        wizardBaseline = null
+        setState { s ->
+            val restored = if (base != null) s.restoredFrom(base) else s
+            restored.copy(wizard = WizardState(), wizardCompleted = true)
+        }
+    }
+
+    private fun wizardFinish(formTab: FormTab?) {
+        wizardBaseline = null
+        setState { s ->
+            s.copy(
+                wizard = WizardState(),
+                wizardCompleted = true,
+                formTab = formTab ?: s.formTab,
+            )
+        }
+    }
+
+    private fun SampleAppUiState.restoredFrom(b: SampleAppUiState) = copy(
+        transportKind = b.transportKind,
+        host = b.host,
+        port = b.port,
+        selectedBluetoothDevice = b.selectedBluetoothDevice,
+        selectedUsbDevice = b.selectedUsbDevice,
+        selectedSerialPort = b.selectedSerialPort,
+        serialBaudRate = b.serialBaudRate,
+        selectedSpoolerPrinter = b.selectedSpoolerPrinter,
+        profileName = b.profileName,
+        dotWidth = b.dotWidth,
+        rasterMode = b.rasterMode,
+        bandHeight = b.bandHeight,
+        cut = b.cut,
+        drawerPin = b.drawerPin,
+        feedDotsAfterContent = b.feedDotsAfterContent,
+        printMode = b.printMode,
+        columnsOverride = b.columnsOverride,
+    )
+
+    private fun SampleAppUiState.toTuningFields() =
+        TuningFields(rasterMode, bandHeight, printMode, dotWidth, feedDotsAfterContent, cut)
+
+    private fun SampleAppUiState.withTuning(f: TuningFields) = copy(
+        rasterMode = f.rasterMode,
+        bandHeight = f.bandHeight,
+        printMode = f.printMode,
+        dotWidth = f.dotWidth,
+        feedDotsAfterContent = f.feedDotsAfterContent,
+        cut = f.cut,
+    )
+
+    /** The page after [w]'s. */
+    private fun nextWizardStep(w: WizardState): WizardStep = when (w.step) {
+        WizardStep.Transport -> WizardStep.Device
+        WizardStep.Device -> WizardStep.ConnectionCheck
+        WizardStep.ConnectionCheck -> WizardStep.Readability
+        WizardStep.Readability -> WizardStep.Width
+        WizardStep.Width -> WizardStep.CutFeed
+        WizardStep.CutFeed, WizardStep.Done -> WizardStep.Done
+    }
+
+    private fun previousWizardStep(w: WizardState): WizardStep = when (w.step) {
+        WizardStep.Transport, WizardStep.Device -> WizardStep.Transport
+        WizardStep.ConnectionCheck -> WizardStep.Device
+        WizardStep.Readability -> WizardStep.ConnectionCheck
+        WizardStep.Width -> WizardStep.Readability
+        WizardStep.CutFeed -> WizardStep.Width
+        WizardStep.Done -> WizardStep.CutFeed
+    }
+
+    private fun goToStep(step: WizardStep, message: String? = null) = setState {
+        it.copy(wizard = it.wizard.copy(step = step, testsPrintedInStep = 0, message = message, exhausted = false))
+    }
+
+    /** Moves to [step]. The first arrival at [WizardStep.Readability] also selects the
+     *  highest-priority print method, so the smoothness check always starts there. */
+    private fun enterStep(step: WizardStep) {
+        if (step == WizardStep.Readability && _uiState.value.wizard.triedReadability.isEmpty()) {
+            startReadabilityCheck(currentFailed = false, prefix = "")
+        } else {
+            goToStep(step)
+        }
+    }
+
+    /**
+     * Opens [WizardStep.Readability] on the top-priority method ([SetupTuning.startReadability]).
+     * [currentFailed] skips the method already in use when it just produced bad output.
+     */
+    private fun startReadabilityCheck(currentFailed: Boolean, prefix: String) {
+        val s = _uiState.value
+        val before = s.toTuningFields()
+        val now = SetupTuning.currentCandidate(before)
+        val outcome = SetupTuning.startReadability(before, currentFailed)
+        val tried = (if (currentFailed) setOf(now) else emptySet()) + SetupTuning.currentCandidate(outcome.fields)
+        setState { it.copy(wizard = it.wizard.copy(triedReadability = tried)) }
+        applyOutcome(outcome, moveTo = WizardStep.Readability, prefix = prefix)
+    }
+
+    /** Sends the current step's test print and records the outcome on the wizard. A job that could
+     *  not even be sent gets transport-specific help instead of a tuning question — that is a
+     *  connection problem, not a setting. */
+    private suspend fun wizardPrintTest() = runExclusive {
+        val state = _uiState.value
+        val profile = repository.buildProfile(state.toProfileSettings())
+        if (profile == null) {
+            setState { it.copy(wizard = it.wizard.copy(message = FIX_PROFILE_MESSAGE)) }
+            return@runExclusive
+        }
+        val step = state.wizard.step
+        val receipt = when (step) {
+            WizardStep.Readability -> wizardSmoothnessTestReceipt(profile, state.printMode)
+            WizardStep.Width -> wizardWidthTestReceipt(profile)
+            WizardStep.CutFeed -> wizardCutFeedTestReceipt(profile)
+            else -> wizardConnectionTestReceipt(profile)
+        }
+        when (val result = send(receipt, profile, state, label = "Setup wizard: ${step.title}", itemCountForLog = null)) {
+            is SendResult.Success -> setState {
+                it.copy(wizard = it.wizard.copy(testsPrintedInStep = it.wizard.testsPrintedInStep + 1, message = null))
+            }
+            is SendResult.Failure -> setState {
+                it.copy(
+                    wizard = it.wizard.copy(
+                        message = result.message + "\n" + SetupTuning.connectionHint(it.transportKind),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun wizardAnswered(answer: WizardAnswer) {
+        val s = _uiState.value
+        val w = s.wizard
+        when (answer) {
+            WizardAnswer.ConnReadable -> enterStep(WizardStep.Readability)
+            // The paper moved, so the printer is reachable — the output method is what failed, so
+            // the smoothness check starts on the best method that was not just the one in use.
+            WizardAnswer.ConnBadOutput -> startReadabilityCheck(
+                currentFailed = true,
+                prefix = "Good news — the printer is reachable, since it moved the paper. ",
+            )
+            WizardAnswer.ConnNothing -> setWizardMessage(SetupTuning.connectionHint(s.transportKind))
+            WizardAnswer.ConnAttention -> setWizardMessage(SetupTuning.ATTENTION_HINT)
+
+            WizardAnswer.ReadClear -> goToStep(WizardStep.Width)
+            WizardAnswer.ReadBad -> tuneReadability()
+            WizardAnswer.ReadNothing -> goToStep(
+                WizardStep.ConnectionCheck,
+                "Nothing printing at all points to the connection, not a setting. " +
+                    SetupTuning.connectionHint(s.transportKind),
+            )
+
+            WizardAnswer.WidthGood -> goToStep(WizardStep.CutFeed)
+            WizardAnswer.WidthCutOff, WizardAnswer.WidthTooNarrow ->
+                applyOutcome(SetupTuning.adjustWidth(s.toTuningFields(), answer))
+
+            WizardAnswer.CutGood -> goToStep(WizardStep.Done)
+            WizardAnswer.CutThroughContent, WizardAnswer.CutTooMuchPaper ->
+                applyOutcome(SetupTuning.adjustFeed(s.toTuningFields(), answer))
+            WizardAnswer.CutDidNotCut -> {
+                val tried = w.triedCuts + s.cut
+                val outcome = SetupTuning.nextCut(s.toTuningFields(), tried)
+                setState { it.copy(wizard = it.wizard.copy(triedCuts = tried + outcome.fields.cut)) }
+                applyOutcome(outcome)
+            }
+        }
+    }
+
+    /** Steps the print-method ladder ([SetupTuning.nextReadability]) and remembers what was tried,
+     *  so the same method is never offered twice. */
+    private fun tuneReadability() {
+        val s = _uiState.value
+        val before = s.toTuningFields()
+        val tried = s.wizard.triedReadability + SetupTuning.currentCandidate(before)
+        val outcome = SetupTuning.nextReadability(before, tried)
+        val newTried = if (outcome.change != null) tried + SetupTuning.currentCandidate(outcome.fields) else tried
+        setState { it.copy(wizard = it.wizard.copy(triedReadability = newTried)) }
+        // Falling back to text mode ends the smoothness check — carry on to the width step.
+        applyOutcome(outcome, moveTo = if (outcome.proceed) WizardStep.Width else null)
+    }
+
+    /** Applies [outcome]'s new settings (recording the old ones for Undo) and shows its message.
+     *  After a change the user is asked to print again, so the answer buttons hide until they do. */
+    private fun applyOutcome(outcome: TuningOutcome, moveTo: WizardStep? = null, prefix: String = "") = setState { s ->
+        val w = s.wizard
+        val changes = if (outcome.change != null) {
+            w.changes + WizardChange(outcome.change, s.toTuningFields())
+        } else {
+            w.changes
+        }
+        s.withTuning(outcome.fields).copy(
+            wizard = w.copy(
+                step = moveTo ?: w.step,
+                changes = changes,
+                message = prefix + outcome.message,
+                exhausted = outcome.exhausted,
+                testsPrintedInStep = if (outcome.change != null || moveTo != null) 0 else w.testsPrintedInStep,
+            ),
+        )
+    }
+
+    private fun setWizardMessage(message: String) =
+        setState { it.copy(wizard = it.wizard.copy(message = message)) }
+
+    private fun wizardUndo() = setState { s ->
+        val last = s.wizard.changes.lastOrNull() ?: return@setState s
+        s.withTuning(last.before).copy(
+            wizard = s.wizard.copy(
+                changes = s.wizard.changes.dropLast(1),
+                message = "Reverted — ${last.description}",
+                exhausted = false,
+                testsPrintedInStep = 0,
+            ),
+        )
     }
 
     /**
@@ -476,11 +739,12 @@ class SampleAppViewModel(context: PlatformContext, private val scope: CoroutineS
         state: SampleAppUiState,
         label: String,
         itemCountForLog: Int?,
-    ) {
+    ): SendResult {
         val result = sendReceipt(
             receipt, profile, state.feedDotsAfterContent, state.toTransportSelection(), label, state.printMode,
         )
         publish(result, label, itemCountForLog)
+        return result
     }
 
     private suspend fun runCheckPrinterStatus() = runExclusive {

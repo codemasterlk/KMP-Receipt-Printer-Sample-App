@@ -5,6 +5,7 @@ import dev.escpos.core.RasterMode
 import dev.escpos.core.RuleStyle
 import dev.escpos.sample.domain.model.PrintMode
 import dev.escpos.sample.domain.model.TransportKind
+import dev.escpos.sample.domain.model.WizardAnswer
 import dev.escpos.transport.bt.BluetoothDeviceInfo
 import dev.escpos.transport.serial.SerialPortInfo
 import dev.escpos.transport.spooler.SpoolerPrinterInfo
@@ -87,4 +88,21 @@ sealed interface SampleAppEvent {
 
     /** Testing-only — see `ReplayReferenceJobUseCase`'s KDoc. */
     data object ReplayReferenceJob : SampleAppEvent
+
+    // Setup wizard — see SetupWizardState / SampleAppViewModel's wizard section.
+    data object WizardStart : SampleAppEvent
+
+    /** Closes the wizard and puts every setting back to what it was when the wizard opened. */
+    data object WizardCancel : SampleAppEvent
+    data object WizardNext : SampleAppEvent
+    data object WizardBack : SampleAppEvent
+
+    /** Sends the current step's short test print. */
+    data object WizardPrintTest : SampleAppEvent
+    data class WizardAnswered(val answer: WizardAnswer) : SampleAppEvent
+    data object WizardUndo : SampleAppEvent
+    data object WizardFinish : SampleAppEvent
+
+    /** Closes the wizard keeping its changes, and lands on the full settings form. */
+    data object WizardOpenFullForm : SampleAppEvent
 }

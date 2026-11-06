@@ -53,6 +53,13 @@ data class SampleAppUiState(
     /** Whether the "Developer tools" card — the diagnostics and experiments — is open. Collapsed
      *  by default and never saved: it's a per-session convenience, not part of the setup. */
     val developerToolsExpanded: Boolean = false,
+
+    /** The guided setup flow. While [WizardState.open] it replaces the form/preview layout. */
+    val wizard: WizardState = WizardState(),
+
+    /** Whether the wizard has been finished or dismissed once — persisted, so it only opens by
+     *  itself on a genuine first run. */
+    val wizardCompleted: Boolean = false,
     val transportKind: TransportKind = availableTransportKinds().first(),
 
     // TCP (FR-6.3)
@@ -156,6 +163,17 @@ data class SampleAppUiState(
      *  otherwise [defaultColumns]. What the preview footer reports. */
     val resolvedColumns: Int
         get() = columnsOverride.toIntOrNull() ?: defaultColumns
+
+    /** Whether the selected transport has everything it needs to attempt a connection — what the
+     *  wizard's device step waits for before enabling "Next". */
+    val hasDeviceSelected: Boolean
+        get() = when (transportKind) {
+            TransportKind.Tcp -> host.isNotBlank() && port.toIntOrNull() != null
+            TransportKind.Bluetooth -> selectedBluetoothDevice != null
+            TransportKind.Usb -> selectedUsbDevice != null
+            TransportKind.Serial -> selectedSerialPort != null && serialBaudRate.toIntOrNull() != null
+            TransportKind.Spooler -> selectedSpoolerPrinter != null
+        }
 
     /** [itemGapDots] parsed, never negative; unparseable falls back to the original gap. */
     val resolvedItemGapDots: Int

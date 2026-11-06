@@ -100,7 +100,11 @@ fun SampleApp(context: PlatformContext) {
             // above. safeContentPadding() also covers Desktop/iOS window insets (a notch, in
             // principle), so it's applied unconditionally rather than only on Android.
             BoxWithConstraints(modifier = Modifier.fillMaxSize().safeContentPadding()) {
-                if (maxWidth >= WIDE_LAYOUT_BREAKPOINT) {
+                if (uiState.wizard.open) {
+                    // The guided setup replaces the form/preview layout while it is open; it edits
+                    // the same state, so closing it lands on the form already showing its results.
+                    SetupWizard(uiState, viewModel, onRefreshBluetooth)
+                } else if (maxWidth >= WIDE_LAYOUT_BREAKPOINT) {
                     Row(modifier = Modifier.fillMaxSize()) {
                         FormPane(
                             uiState = uiState,
@@ -170,6 +174,14 @@ private fun FormPane(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         HeaderSection()
+        // Always visible, on every tab — the wizard is the guided way into the settings below.
+        Button(
+            onClick = { viewModel.onEvent(SampleAppEvent.WizardStart) },
+            enabled = !uiState.printing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Run setup wizard")
+        }
         RunningOnSection()
 
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -516,7 +528,7 @@ private fun ConnectionCard(uiState: SampleAppUiState, viewModel: SampleAppViewMo
 }
 
 @Composable
-private fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewModel, onRefreshBluetooth: () -> Unit) {
+internal fun DeviceSection(uiState: SampleAppUiState, viewModel: SampleAppViewModel, onRefreshBluetooth: () -> Unit) {
     when (uiState.transportKind) {
         // No network discovery is implemented (FR-9.x scopes discovery to paired Bluetooth and
         // enumerated USB only) — this is manual entry, not a device list. Deliberately not

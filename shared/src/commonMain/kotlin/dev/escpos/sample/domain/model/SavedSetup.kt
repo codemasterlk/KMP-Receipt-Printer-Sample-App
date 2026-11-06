@@ -43,4 +43,7 @@ data class SavedSetup(
     val columnsOverride: String? = null,
     val itemCount: String? = null,
     val contentFontId: String? = null,
+    /** Whether the setup wizard has been finished (or dismissed) once — so it only opens by itself
+     *  on a genuine first run. */
+    val setupWizardCompleted: Boolean? = null,
 )
